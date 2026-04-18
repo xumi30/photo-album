@@ -1,0 +1,14 @@
+node_modules/
+dist/
+.DS_Store
+
+# runtime data
+server/.data/
+server/.weekly-usage.json
+
+# local env
+server/.env
+
+# photo library (usually huge / private)
+public/assets/live/
+

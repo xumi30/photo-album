@@ -1,0 +1,1399 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta name="robots" content="noindex,nofollow" />
+  <title>照片时间轴 · 管理</title>
+  <style>
+    :root {
+      --bg: #0f1117;
+      --card: #1a1d27;
+      --border: #2a2f3d;
+      --text: #e8eaef;
+      --muted: #8b92a5;
+      --accent: #6b8cff;
+      --err: #f07178;
+      --ok: #7fd99a;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      min-height: 100vh;
+      font-family: ui-sans-serif, system-ui, "Segoe UI", sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      line-height: 1.5;
+    }
+    .wrap { max-width: 960px; margin: 0 auto; padding: 24px 16px 48px; }
+    h1 { font-size: 1.35rem; font-weight: 600; margin: 0 0 8px; }
+    .sub { color: var(--muted); font-size: 0.9rem; margin-bottom: 24px; }
+    .card {
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 16px 18px;
+      margin-bottom: 16px;
+    }
+    label { display: block; font-size: 0.8rem; color: var(--muted); margin-bottom: 6px; }
+    input[type="password"], input[type="text"], textarea {
+      width: 100%;
+      padding: 10px 12px;
+      border-radius: 8px;
+      border: 1px solid var(--border);
+      background: #12151c;
+      color: var(--text);
+      font-size: 0.95rem;
+    }
+    textarea { min-height: 88px; resize: vertical; font-family: inherit; }
+    .row { display: grid; gap: 12px; margin-bottom: 12px; }
+    @media (min-width: 560px) {
+      .row.cols-2 { grid-template-columns: 1fr 1fr; }
+    }
+    button {
+      padding: 10px 18px;
+      border-radius: 8px;
+      border: none;
+      font-size: 0.95rem;
+      cursor: pointer;
+      background: var(--accent);
+      color: #0a0c12;
+      font-weight: 600;
+    }
+    button.secondary { background: #2e3448; color: var(--text); }
+    button.danger { background: rgba(240, 113, 120, 0.18); color: #ffd7da; border: 1px solid rgba(240, 113, 120, 0.45); }
+    button.danger:hover { background: rgba(240, 113, 120, 0.28); }
+    button:disabled { opacity: 0.45; cursor: not-allowed; }
+    .toolbar { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; margin-bottom: 12px; }
+    .toolbar__spacer { flex: 1; min-width: 10px; }
+    .toolbar__search {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      flex: 1 1 320px;
+      justify-content: flex-end;
+    }
+    .toolbar__search input[type="search"] {
+      max-width: 520px;
+      flex: 1 1 260px;
+    }
+    .modal {
+      position: fixed;
+      inset: 0;
+      background: rgba(0, 0, 0, 0.55);
+      display: flex;
+      align-items: flex-start;
+      justify-content: center;
+      padding: 28px 16px;
+      z-index: 50;
+    }
+    .modal__card {
+      width: min(720px, 100%);
+      margin-top: 6vh;
+    }
+    .msg { font-size: 0.88rem; min-height: 1.4em; }
+    .msg.err { color: var(--err); }
+    .msg.ok { color: var(--ok); }
+    .list { display: flex; flex-direction: column; gap: 8px; }
+    .list--grouped { gap: 18px; }
+    .day-group {
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      overflow: hidden;
+      background: #151821;
+    }
+    .day-group__heading {
+      margin: 0;
+      padding: 10px 14px;
+      font-size: 0.95rem;
+      font-weight: 600;
+      background: #1a1f2e;
+      border-bottom: 1px solid var(--border);
+      color: #dce0eb;
+      display: flex;
+      align-items: baseline;
+      flex-wrap: wrap;
+      gap: 6px 10px;
+    }
+    .day-group__hint {
+      font-weight: 400;
+      font-size: 0.78rem;
+      color: var(--muted);
+    }
+    .day-group__entries {
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+      padding: 10px 12px 12px;
+    }
+    .item {
+      display: flex;
+      justify-content: space-between;
+      align-items: flex-start;
+      gap: 12px;
+      padding: 12px 14px;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      background: #12151c;
+    }
+    .item.is-active {
+      border-color: rgba(107, 140, 255, 0.9);
+      box-shadow: 0 0 0 2px rgba(107, 140, 255, 0.15);
+      background: #151a26;
+    }
+    .item > .btn-edit { flex-shrink: 0; margin-top: 2px; }
+    .item small { color: var(--muted); display: block; margin-top: 4px; font-size: 0.8rem; }
+    .item .tags { color: #a8b0c4; font-size: 0.85rem; }
+    .item-row { display: flex; gap: 14px; align-items: flex-start; flex: 1; min-width: 0; }
+    .item-body { flex: 1; min-width: 0; }
+    .item-thumb {
+      width: 88px; height: 88px; flex-shrink: 0; border-radius: 8px; overflow: hidden;
+      background: #0a0c12; border: 1px solid var(--border);
+    }
+    .thumb-del {
+      position: absolute;
+      top: 6px;
+      left: 6px;
+      width: 22px;
+      height: 22px;
+      border-radius: 999px;
+      border: 1px solid rgba(255, 255, 255, 0.22);
+      background: rgba(10, 12, 18, 0.35);
+      color: rgba(255, 255, 255, 0.82);
+      font-size: 14px;
+      line-height: 1;
+      display: none;
+      align-items: center;
+      justify-content: center;
+      cursor: pointer;
+      backdrop-filter: blur(6px);
+    }
+    .edit-thumb:hover .thumb-del,
+    .edit-thumb:focus-within .thumb-del {
+      display: flex;
+    }
+    .thumb-del:hover {
+      background: rgba(240, 113, 120, 0.22);
+      border-color: rgba(240, 113, 120, 0.55);
+      color: #ffecec;
+    }
+    .item-thumb img { width: 100%; height: 100%; object-fit: cover; display: block; }
+    .item-thumb--empty {
+      display: flex; align-items: center; justify-content: center; color: var(--muted);
+      font-size: 0.72rem; text-align: center; padding: 6px; line-height: 1.3;
+    }
+    .meta-line { font-size: 0.82rem; color: #9aa3b5; margin-top: 6px; line-height: 1.45; }
+    .meta-line strong { color: #c4cad8; font-weight: 500; }
+    .field-readonly {
+      padding: 10px 12px; border-radius: 8px; border: 1px dashed var(--border);
+      background: #12151c; color: #c8ceda; font-size: 0.92rem; line-height: 1.45;
+    }
+    .edit-thumbs { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 6px; }
+    .edit-thumbs .edit-thumb {
+      position: relative;
+      width: 80px;
+      height: 80px;
+      border-radius: 6px;
+      overflow: hidden;
+      border: 1px solid var(--border);
+    }
+    .edit-thumbs a {
+      display: block;
+      width: 100%;
+      height: 100%;
+    }
+    .edit-thumbs img { width: 100%; height: 100%; object-fit: cover; display: block; vertical-align: middle; }
+    .hidden { display: none !important; }
+    a { color: var(--accent); }
+    .login-compare { margin-top: 12px; }
+    .compare-table { width: 100%; border-collapse: collapse; font-size: 0.88rem; }
+    .compare-table caption { text-align: left; font-weight: 600; margin-bottom: 8px; color: var(--muted); }
+    .compare-table th,
+    .compare-table td { border: 1px solid var(--border); padding: 8px 10px; text-align: left; }
+    .compare-table th { background: #12151c; color: #9aa3b5; font-weight: 500; width: 42%; }
+    .pill {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      padding: 2px 8px;
+      border-radius: 999px;
+      border: 1px solid rgba(107, 140, 255, 0.4);
+      background: rgba(107, 140, 255, 0.12);
+      color: #cdd6ff;
+      font-size: 0.78rem;
+      font-weight: 600;
+      vertical-align: middle;
+      margin-left: 8px;
+    }
+    #editCard.is-inline {
+      margin-top: 10px;
+    }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <h1>照片时间轴 · 后台</h1>
+    <p class="sub">列表按<strong>日历日</strong>分组。每条 entry 对应服务端定义的<strong>同日 + GPS 粗网格</strong>（约百米级），主键 id 为派生的 <code>pt_…</code>。同一天多条 = 不同网格或 <code>nogps</code>。支持<strong>新增 entry</strong>与右上角<strong>搜索</strong>（日期/地点/备注/标签/id/坐标等）。编辑可改标题、地点文案、备注、标签、<strong>GPS（经纬度/地名）</strong>；<strong>日期只读</strong>。鉴权：<code>ADMIN_SECRET</code>（登录成功后 <strong>10 分钟</strong>内会自动续期会话，不必反复粘贴）。</p>
+
+    <div id="loginPanel" class="card">
+      <label for="token">访问令牌（写入 server/.env 的密钥）</label>
+      <input type="password" id="token" autocomplete="current-password" placeholder="粘贴密钥后进入" />
+      <div class="toolbar" style="margin-top: 12px;">
+        <button type="button" id="btnLogin">进入管理</button>
+      </div>
+      <p id="loginMsg" class="msg err"></p>
+      <div id="loginCompare" class="login-compare hidden" aria-live="polite"></div>
+    </div>
+
+    <div id="mainPanel" class="hidden">
+      <div class="toolbar">
+        <button type="button" id="btnNewEntry">新增 entry</button>
+        <button type="button" id="btnReload">刷新列表</button>
+        <button type="button" id="btnLogout" class="secondary">退出</button>
+        <span style="color: var(--muted); font-size: 0.88rem;">前台时间轴：<a href="/photo-timeline.html">/photo-timeline.html</a></span>
+        <span class="toolbar__spacer"></span>
+        <div class="toolbar__search">
+          <input
+            type="search"
+            id="listSearch"
+            placeholder="搜索：日期 / 地点 / 备注 / 标签 / id / 坐标…"
+            aria-label="搜索条目"
+          />
+          <!-- <button type="button" id="btnSearchClear" class="secondary">清空</button> -->
+        </div>
+      </div>
+      <p id="listMsg" class="msg"></p>
+      <div id="entryList" class="list list--grouped"></div>
+
+      <div id="editCard" class="card hidden">
+        <h2 style="font-size: 1.05rem; margin: 0 0 12px;">编辑条目</h2>
+        <p id="editSummary" style="color: var(--muted); font-size: 0.88rem; margin: -6px 0 12px;"></p>
+        <p style="color: var(--muted); font-size: 0.85rem; margin: 0 0 12px;">id：<code id="editId"></code></p>
+        <p style="color: var(--muted); font-size: 0.85rem; margin: 0 0 12px;">粗网格键（只读）：<code id="editGridKey">—</code></p>
+        <div class="row">
+          <div>
+            <label>照片预览</label>
+            <div id="editThumbs" class="edit-thumbs"></div>
+          </div>
+        </div>
+        <div class="row cols-2">
+          <div>
+            <label>日期（只读）</label>
+            <div id="displayDate" class="field-readonly"></div>
+          </div>
+          <div>
+            <label for="fTitle">标题</label>
+            <input type="text" id="fTitle" />
+          </div>
+        </div>
+        <div class="row cols-2">
+          <div>
+            <label for="fGpsLabel">GPS 地名（label）</label>
+            <input type="text" id="fGpsLabel" placeholder="逆地理/手填地名（写入 entry_gps.label）" />
+          </div>
+          <div>
+            <label style="color: var(--muted); font-size: 0.78rem;">提示</label>
+            <div class="field-readonly" style="font-size: 0.85rem;">
+              坐标为 <strong>WGS84</strong>。修改经纬度会重算粗网格键，并可能在冲突时合并/迁移条目 id。
+            </div>
+          </div>
+        </div>
+        <div class="row cols-2">
+          <div>
+            <label for="fGpsLat">纬度（WGS84）</label>
+            <input type="text" id="fGpsLat" inputmode="decimal" placeholder="例如 30.123456" />
+          </div>
+          <div>
+            <label for="fGpsLng">经度（WGS84）</label>
+            <input type="text" id="fGpsLng" inputmode="decimal" placeholder="例如 120.123456" />
+          </div>
+        </div>
+        <div class="row">
+          <div>
+            <label>天气（只读）</label>
+            <div id="displayWeather" class="field-readonly"></div>
+          </div>
+        </div>
+        <div class="row">
+          <div>
+            <label for="fPlace">地点文案（可改，用于前台展示）</label>
+            <input type="text" id="fPlace" placeholder="可与 GPS 地名不同，用于简短展示" />
+          </div>
+        </div>
+        <div class="row">
+          <div>
+            <label for="fTags">标签（逗号分隔）</label>
+            <input type="text" id="fTags" placeholder="Live, 通勤" />
+          </div>
+        </div>
+        <div class="row">
+          <div>
+            <label for="fNote">备注</label>
+            <textarea id="fNote"></textarea>
+          </div>
+        </div>
+        <div class="toolbar">
+          <button type="button" id="btnSave">保存</button>
+          <button type="button" id="btnCancel" class="secondary">取消</button>
+          <button type="button" id="btnDeleteEntry" class="danger">删除条目</button>
+        </div>
+        <p id="editMsg" class="msg"></p>
+      </div>
+    </div>
+
+    <div id="createModal" class="modal hidden" role="dialog" aria-modal="true" aria-label="新增条目">
+      <div class="card modal__card">
+        <h2 style="font-size: 1.05rem; margin: 0 0 10px;">新增 entry</h2>
+        <p style="color: var(--muted); font-size: 0.85rem; margin: 0 0 12px;">
+          会写入 SQLite，并同步到 <code>public/assets/live/_admin-manual/photo-timeline-entry.json</code>（首次会自动创建）。坐标为 <strong>WGS84</strong>；经纬度可留空（nogps）。
+        </p>
+        <div class="row cols-2">
+          <div>
+            <label for="cDate">日期（YYYY-MM-DD）</label>
+            <input type="date" id="cDate" />
+          </div>
+          <div>
+            <label for="cTitle">标题</label>
+            <input type="text" id="cTitle" placeholder="可选" />
+          </div>
+        </div>
+        <div class="row">
+          <div>
+            <label for="cPlace">地点文案</label>
+            <input type="text" id="cPlace" placeholder="可选" />
+          </div>
+        </div>
+        <div class="row cols-2">
+          <div>
+            <label for="cGpsLabel">GPS 地名（label）</label>
+            <input type="text" id="cGpsLabel" placeholder="可选" />
+          </div>
+          <div>
+            <label for="cTags">标签（逗号分隔）</label>
+            <input type="text" id="cTags" placeholder="可选" />
+          </div>
+        </div>
+        <div class="row cols-2">
+          <div>
+            <label for="cLat">纬度（WGS84）</label>
+            <input type="text" id="cLat" inputmode="decimal" placeholder="可空" />
+          </div>
+          <div>
+            <label for="cLng">经度（WGS84）</label>
+            <input type="text" id="cLng" inputmode="decimal" placeholder="可空" />
+          </div>
+        </div>
+        <div class="row">
+          <div>
+            <label for="cNote">备注</label>
+            <textarea id="cNote" placeholder="可选"></textarea>
+          </div>
+        </div>
+        <div class="toolbar">
+          <button type="button" id="btnCreateSubmit">创建</button>
+          <button type="button" id="btnCreateCancel" class="secondary">取消</button>
+        </div>
+        <p id="createMsg" class="msg"></p>
+      </div>
+    </div>
+  </div>
+  <script>
+(function () {
+  const AUTH_STORAGE_KEY = "admin_photo_timeline_auth_v1";
+  const AUTH_TTL_MS = 10 * 60 * 1000;
+  const loginPanel = document.getElementById("loginPanel");
+  const mainPanel = document.getElementById("mainPanel");
+  const tokenInput = document.getElementById("token");
+  const loginMsg = document.getElementById("loginMsg");
+  const listMsg = document.getElementById("listMsg");
+  const entryList = document.getElementById("entryList");
+  const editCard = document.getElementById("editCard");
+  const editId = document.getElementById("editId");
+  const editThumbs = document.getElementById("editThumbs");
+  const displayDate = document.getElementById("displayDate");
+  const displayWeather = document.getElementById("displayWeather");
+  const fTitle = document.getElementById("fTitle");
+  const fGpsLabel = document.getElementById("fGpsLabel");
+  const fGpsLat = document.getElementById("fGpsLat");
+  const fGpsLng = document.getElementById("fGpsLng");
+  const fPlace = document.getElementById("fPlace");
+  const fTags = document.getElementById("fTags");
+  const fNote = document.getElementById("fNote");
+  const editMsg = document.getElementById("editMsg");
+  const editGridKey = document.getElementById("editGridKey");
+  const editSummary = document.getElementById("editSummary");
+  const btnDeleteEntry = document.getElementById("btnDeleteEntry");
+  const btnNewEntry = document.getElementById("btnNewEntry");
+  const listSearch = document.getElementById("listSearch");
+  const btnSearchClear = document.getElementById("btnSearchClear");
+
+  const createModal = document.getElementById("createModal");
+  const cDate = document.getElementById("cDate");
+  const cTitle = document.getElementById("cTitle");
+  const cPlace = document.getElementById("cPlace");
+  const cGpsLabel = document.getElementById("cGpsLabel");
+  const cTags = document.getElementById("cTags");
+  const cLat = document.getElementById("cLat");
+  const cLng = document.getElementById("cLng");
+  const cNote = document.getElementById("cNote");
+  const btnCreateSubmit = document.getElementById("btnCreateSubmit");
+  const btnCreateCancel = document.getElementById("btnCreateCancel");
+  const createMsg = document.getElementById("createMsg");
+
+  let allEntries = [];
+  let listFilterTimer = null;
+
+  const safeLocalStorage = {
+    get(key) {
+      try {
+        return window.localStorage.getItem(key);
+      } catch (e) {
+        return null;
+      }
+    },
+    set(key, value) {
+      try {
+        window.localStorage.setItem(key, value);
+      } catch (e) {
+        /* ignore */
+      }
+    },
+    remove(key) {
+      try {
+        window.localStorage.removeItem(key);
+      } catch (e) {
+        /* ignore */
+      }
+    },
+  };
+
+  function readAuthRecord() {
+    const raw = safeLocalStorage.get(AUTH_STORAGE_KEY);
+    if (!raw) return null;
+    try {
+      const obj = JSON.parse(raw);
+      if (!obj || typeof obj !== "object") return null;
+      if (typeof obj.token !== "string" || !obj.token.trim()) return null;
+      const exp = Number(obj.exp);
+      if (!Number.isFinite(exp)) return null;
+      return { token: obj.token.trim(), exp };
+    } catch (e) {
+      return null;
+    }
+  }
+
+  function getToken() {
+    const rec = readAuthRecord();
+    if (!rec) return "";
+    if (Date.now() > rec.exp) {
+      safeLocalStorage.remove(AUTH_STORAGE_KEY);
+      return "";
+    }
+    return rec.token;
+  }
+
+  function setToken(t) {
+    const s = t != null ? String(t).trim() : "";
+    if (!s) {
+      safeLocalStorage.remove(AUTH_STORAGE_KEY);
+      return;
+    }
+    safeLocalStorage.set(
+      AUTH_STORAGE_KEY,
+      JSON.stringify({ token: s, exp: Date.now() + AUTH_TTL_MS })
+    );
+  }
+
+  function authHeaders() {
+    const t = getToken();
+    const headers = { "Content-Type": "application/json" };
+    if (t) headers.Authorization = "Bearer " + t;
+    return headers;
+  }
+
+  function apiUrl(path) {
+    return new URL(path, window.location.origin).toString();
+  }
+
+  async function api(path, opt) {
+    const base = opt && typeof opt === "object" ? opt : {};
+    const headers = Object.assign({}, authHeaders(), base.headers || {});
+    const next = Object.assign({}, base, { headers, credentials: "same-origin" });
+    const r = await fetch(apiUrl(path), next);
+    const data = await r.json().catch(function () { return {}; });
+    if (!r.ok) {
+      var hint = data.error || r.statusText || String(r.status);
+      if (r.status === 404) {
+        hint +=
+          "。常见原因：① 未重启 npm start；② 用 Vite（:3050）时 /api 代理端口需与 server/.env 的 PORT 一致；③ 请重启 Vite 后再试。";
+      }
+      throw new Error(hint);
+    }
+    return data;
+  }
+
+  async function tryResumeWithCookieSession() {
+    const r = await fetch(apiUrl("/api/admin/photo-timeline/entries"), {
+      method: "GET",
+      credentials: "same-origin",
+      headers: { "Content-Type": "application/json" },
+    });
+    if (!r.ok) return false;
+    return true;
+  }
+
+  async function logoutServer() {
+    try {
+      await fetch(apiUrl("/api/admin/logout"), {
+        method: "POST",
+        credentials: "same-origin",
+        headers: { "Content-Type": "application/json" },
+        body: "{}",
+      });
+    } catch (e) {
+      /* ignore */
+    }
+  }
+
+  function showLogin() {
+    loginPanel.classList.remove("hidden");
+    mainPanel.classList.add("hidden");
+  }
+  function showMain() {
+    loginPanel.classList.add("hidden");
+    mainPanel.classList.remove("hidden");
+  }
+
+  function escapeHtml(s) {
+    const d = document.createElement("div");
+    d.textContent = s;
+    return d.innerHTML;
+  }
+
+  function mediaUrl(rel) {
+    if (!rel || typeof rel !== "string") return "";
+    var s = rel.trim();
+    if (/^https?:\/\//i.test(s)) return s;
+    if (s.startsWith("/")) return s;
+    return "/" + s.replace(/^\/+/, "");
+  }
+
+  function firstThumbSrc(entry) {
+    var photos = entry.photos;
+    if (!Array.isArray(photos) || !photos.length) return "";
+    var p = photos[0];
+    return mediaUrl((p && (p.thumb || p.src)) || "");
+  }
+
+  function confirmTwice(title, detail) {
+    var d = detail ? String(detail) : "";
+    var a = window.confirm(title + (d ? "\n\n" + d : ""));
+    if (!a) return false;
+    var b = window.confirm("再次确认：" + title + (d ? "\n\n" + d : ""));
+    return !!b;
+  }
+
+  async function deleteEntryById(entryId, detailText) {
+    var id = String(entryId || "").trim();
+    if (!id) return false;
+    if (!confirmTwice("确定删除该条目？", detailText || "将删除数据库记录、同步更新 JSON，并尝试删除关联媒体文件。")) {
+      return false;
+    }
+    var typed = window.prompt('如确认删除，请输入大写 "DELETE"（二次输入）');
+    if (String(typed || "").trim() !== "DELETE") {
+      listMsg.textContent = "已取消删除（需要输入 DELETE）";
+      listMsg.className = "msg err";
+      return false;
+    }
+    await api("/api/admin/photo-timeline/entry/" + encodeURIComponent(id), { method: "DELETE" });
+    return true;
+  }
+
+  async function deletePhotoById(entryId, photoId, detailText) {
+    var eid = String(entryId || "").trim();
+    var pid = Number(photoId);
+    if (!eid || !Number.isFinite(pid) || pid <= 0) return false;
+    if (!confirmTwice("确定删除该照片？", detailText || "将删除数据库记录、同步更新 JSON，并尝试删除磁盘上的图片/视频文件。")) {
+      return false;
+    }
+    var typed = window.prompt('如确认删除，请输入大写 "DELETE"（二次输入）');
+    if (String(typed || "").trim() !== "DELETE") {
+      listMsg.textContent = "已取消删除（需要输入 DELETE）";
+      listMsg.className = "msg err";
+      return false;
+    }
+    await api(
+      "/api/admin/photo-timeline/entry/" + encodeURIComponent(eid) + "/photo/" + encodeURIComponent(String(pid)),
+      { method: "DELETE" }
+    );
+    return true;
+  }
+
+  function fillEditThumbs(entry) {
+    editThumbs.innerHTML = "";
+    var photos = entry.photos;
+    if (!Array.isArray(photos) || !photos.length) {
+      var empty = document.createElement("span");
+      empty.style.color = "var(--muted)";
+      empty.style.fontSize = "0.85rem";
+      empty.textContent = "无照片";
+      editThumbs.appendChild(empty);
+      return;
+    }
+    photos.forEach(function (p, i) {
+      var url = mediaUrl((p && (p.thumb || p.src)) || "");
+      if (!url) return;
+      var wrap = document.createElement("div");
+      wrap.className = "edit-thumb";
+
+      var a = document.createElement("a");
+      a.href = url;
+      a.target = "_blank";
+      a.rel = "noopener noreferrer";
+      a.title = "照片 " + (i + 1);
+      var img = document.createElement("img");
+      img.alt = (p && p.caption) || "photo";
+      img.loading = "lazy";
+      img.src = url;
+      img.onerror = function () {
+        img.replaceWith(document.createTextNode("…"));
+      };
+      a.appendChild(img);
+      wrap.appendChild(a);
+
+      var pid = p && p.id != null ? Number(p.id) : NaN;
+      if (Number.isFinite(pid) && pid > 0 && entry && entry.id) {
+        var del = document.createElement("button");
+        del.type = "button";
+        del.className = "thumb-del";
+        del.textContent = "×";
+        del.title = "删除该照片";
+        del.addEventListener("click", async function (ev) {
+          ev.preventDefault();
+          ev.stopPropagation();
+          try {
+            var cap = (p && p.caption) || "";
+            var ok = await deletePhotoById(entry.id, pid, cap ? "备注/说明：" + cap : "");
+            if (!ok) return;
+            editMsg.textContent = "已删除照片";
+            editMsg.className = "msg ok";
+            var latest = await api("/api/admin/photo-timeline/entry/" + encodeURIComponent(String(entry.id)));
+            if (latest && latest.entry) openEdit(latest.entry);
+            loadList();
+          } catch (err) {
+            listMsg.textContent = String(err.message || err);
+            listMsg.className = "msg err";
+          }
+        });
+        wrap.appendChild(del);
+      }
+
+      editThumbs.appendChild(wrap);
+    });
+  }
+
+  function formatLocationLine(entry) {
+    var parts = [];
+    var pl = entry.place && String(entry.place).trim();
+    if (pl) parts.push(pl);
+    var g = entry.gps;
+    if (g && typeof g === "object") {
+      var lab = g.label && String(g.label).trim();
+      if (lab && parts.indexOf(lab) < 0) parts.push(lab);
+      var lat = g.latitude != null ? g.latitude : g.lat;
+      var lng = g.longitude != null ? g.longitude : (g.lng != null ? g.lng : g.lon);
+      if (lat != null && lng != null && !isNaN(Number(lat)) && !isNaN(Number(lng))) {
+        parts.push("坐标 " + Number(lat).toFixed(5) + ", " + Number(lng).toFixed(5));
+      }
+    }
+    return parts.length ? parts.join(" · ") : "—";
+  }
+
+  function formatWeatherLine(w) {
+    if (!w || typeof w !== "object") return "—";
+    var bits = [];
+    if (w.summary != null && String(w.summary).trim()) bits.push(String(w.summary).trim());
+    if (w.temp_high_c != null || w.temp_low_c != null) {
+      var hi = w.temp_high_c != null ? w.temp_high_c + "°" : "—";
+      var lo = w.temp_low_c != null ? w.temp_low_c + "°" : "—";
+      bits.push(hi + " / " + lo);
+    }
+    if (w.precipitation_mm != null && !isNaN(Number(w.precipitation_mm))) bits.push("降水 " + w.precipitation_mm + "mm");
+    return bits.length ? bits.join(" · ") : "—";
+  }
+
+  let editingId = null;
+  let editingRowEl = null;
+  const editCardHomeParent = editCard.parentElement;
+  const editCardHomeNext = editCard.nextSibling;
+
+  function placeEditCardUnderActiveRow() {
+    if (!editingRowEl) return;
+    if (editCard.parentElement !== editingRowEl.parentElement) {
+      editingRowEl.insertAdjacentElement("afterend", editCard);
+    } else {
+      // same parent; ensure it's right below the row
+      if (editingRowEl.nextElementSibling !== editCard) {
+        editingRowEl.insertAdjacentElement("afterend", editCard);
+      }
+    }
+    editCard.classList.add("is-inline");
+  }
+
+  function restoreEditCardHome() {
+    if (!editCardHomeParent) return;
+    if (editCardHomeNext && editCardHomeNext.parentElement === editCardHomeParent) {
+      editCardHomeParent.insertBefore(editCard, editCardHomeNext);
+    } else {
+      editCardHomeParent.appendChild(editCard);
+    }
+    editCard.classList.remove("is-inline");
+  }
+
+  function setUrlEntryParam(id) {
+    try {
+      const u = new URL(window.location.href);
+      if (id) u.searchParams.set("entry", String(id));
+      else u.searchParams.delete("entry");
+      history.replaceState({}, "", u.toString());
+    } catch (e) {}
+  }
+
+  function setActiveRow(id) {
+    if (editingRowEl) {
+      editingRowEl.classList.remove("is-active");
+      var prevBtn = editingRowEl.querySelector(".btn-edit");
+      if (prevBtn) prevBtn.textContent = "编辑";
+    }
+    editingRowEl = null;
+    if (!id) return;
+    var el = entryList.querySelector('[data-entry-id="' + CSS.escape(String(id)) + '"]');
+    if (el) {
+      el.classList.add("is-active");
+      editingRowEl = el;
+      var btn = editingRowEl.querySelector(".btn-edit");
+      if (btn) btn.textContent = "正在编辑";
+    }
+  }
+
+  function openEdit(entry) {
+    editingId = entry.id;
+    editId.textContent = entry.id;
+    editGridKey.textContent = entry.gps_grid_key != null && String(entry.gps_grid_key).trim() !== ""
+      ? String(entry.gps_grid_key)
+      : "—";
+    displayDate.textContent = entry.calendar_date || entry.date || "—";
+    displayWeather.textContent = formatWeatherLine(entry.weather);
+    var g = entry.gps && typeof entry.gps === "object" ? entry.gps : {};
+    var lab = g.label != null ? String(g.label) : "";
+    var lat = g.latitude != null ? g.latitude : g.lat;
+    var lng = g.longitude != null ? g.longitude : (g.lng != null ? g.lng : g.lon);
+    if (fGpsLabel) fGpsLabel.value = lab;
+    if (fGpsLat) fGpsLat.value = lat != null && !isNaN(Number(lat)) ? String(lat) : "";
+    if (fGpsLng) fGpsLng.value = lng != null && !isNaN(Number(lng)) ? String(lng) : "";
+    fillEditThumbs(entry);
+    fTitle.value = entry.title || "";
+    fPlace.value = entry.place || "";
+    fTags.value = Array.isArray(entry.tags) ? entry.tags.join(", ") : "";
+    fNote.value = entry.note || "";
+    editMsg.textContent = "";
+    editMsg.className = "msg";
+    editCard.classList.remove("hidden");
+    editSummary.innerHTML =
+      '当前正在编辑：<strong style="color:#e8eaef; font-weight:600;">' +
+      escapeHtml(entry.title || "(无标题)") +
+      "</strong>" +
+      ' <span class="pill">正在编辑</span>' +
+      '<span style="margin-left:10px;">' +
+      escapeHtml(entry.calendar_date || entry.date || "—") +
+      "</span>";
+    setUrlEntryParam(editingId);
+    setActiveRow(editingId);
+    placeEditCardUnderActiveRow();
+    editCard.scrollIntoView({ behavior: "smooth", block: "nearest" });
+  }
+
+  function closeEdit() {
+    editingId = null;
+    setUrlEntryParam("");
+    setActiveRow("");
+    editCard.classList.add("hidden");
+    restoreEditCardHome();
+  }
+
+  function dayKeyFromEntry(entry) {
+    if (entry && entry.calendar_date && String(entry.calendar_date).match(/^\d{4}-\d{2}-\d{2}$/)) {
+      return String(entry.calendar_date);
+    }
+    var m = String(entry && entry.date ? entry.date : "").match(/^(\d{4}-\d{2}-\d{2})/);
+    return m ? m[1] : "";
+  }
+
+  function formatDayHeading(ymd) {
+    if (!ymd || ymd === "__nodate__") return "日期未识别";
+    var wk = ["日", "一", "二", "三", "四", "五", "六"];
+    var d = new Date(ymd + "T12:00:00");
+    if (isNaN(d.getTime())) return ymd;
+    return ymd + "　周" + wk[d.getDay()];
+  }
+
+  function groupEntriesByCalendarDay(entries) {
+    var map = {};
+    (entries || []).forEach(function (e) {
+      var k = dayKeyFromEntry(e) || "__nodate__";
+      if (!map[k]) map[k] = [];
+      map[k].push(e);
+    });
+    var keys = Object.keys(map).sort(function (a, b) {
+      if (a === "__nodate__") return 1;
+      if (b === "__nodate__") return -1;
+      return b.localeCompare(a);
+    });
+    return keys.map(function (k) {
+      return { dayKey: k, entries: map[k] };
+    });
+  }
+
+  function appendEntryRow(parent, e) {
+    var row = document.createElement("div");
+    row.className = "item";
+    row.dataset.entryId = e.id || "";
+    if (editingId && e.id === editingId) row.classList.add("is-active");
+    var inner = document.createElement("div");
+    inner.className = "item-row";
+    var thumb = document.createElement("div");
+    thumb.className = "item-thumb";
+    var tsrc = firstThumbSrc(e);
+    if (tsrc) {
+      var im = document.createElement("img");
+      im.alt = "";
+      im.loading = "lazy";
+      im.src = tsrc;
+      im.onerror = function () {
+        thumb.className = "item-thumb item-thumb--empty";
+        thumb.textContent = "无图";
+        im.remove();
+      };
+      thumb.appendChild(im);
+    } else {
+      thumb.className = "item-thumb item-thumb--empty";
+      thumb.textContent = "无图";
+    }
+    var body = document.createElement("div");
+    body.className = "item-body";
+    var title = document.createElement("strong");
+    title.textContent = e.title || "(无标题)";
+    body.appendChild(title);
+    var small = document.createElement("small");
+    var grid = e.gps_grid_key != null && String(e.gps_grid_key).trim() !== "" ? String(e.gps_grid_key) : "—";
+    small.textContent = (e.calendar_date || e.date || "—") + " · " + grid + " · " + (e.id || "");
+    body.appendChild(small);
+    if (Array.isArray(e.tags) && e.tags.length) {
+      var tg = document.createElement("div");
+      tg.className = "tags";
+      tg.textContent = e.tags.join(" · ");
+      body.appendChild(tg);
+    }
+    var locStr = formatLocationLine(e);
+    if (locStr !== "—") {
+      var locLine = document.createElement("div");
+      locLine.className = "meta-line";
+      locLine.innerHTML = "<strong>地理</strong> " + escapeHtml(locStr);
+      body.appendChild(locLine);
+    }
+    var wxStr = formatWeatherLine(e.weather);
+    if (wxStr !== "—") {
+      var wxLine = document.createElement("div");
+      wxLine.className = "meta-line";
+      wxLine.innerHTML = "<strong>天气</strong> " + escapeHtml(wxStr);
+      body.appendChild(wxLine);
+    }
+    inner.appendChild(thumb);
+    inner.appendChild(body);
+    var btn = document.createElement("button");
+    btn.type = "button";
+    btn.className = "secondary btn-edit";
+    btn.textContent = (editingId && e.id === editingId) ? "正在编辑" : "编辑";
+    btn.addEventListener("click", function () {
+      openEdit(e);
+    });
+    row.appendChild(inner);
+    row.appendChild(btn);
+    parent.appendChild(row);
+  }
+
+  function norm(s) {
+    return String(s || "").toLowerCase();
+  }
+
+  function entrySearchText(e) {
+    var bits = [];
+    bits.push(e.id);
+    bits.push(e.calendar_date);
+    bits.push(e.date);
+    bits.push(e.title);
+    bits.push(e.place);
+    bits.push(e.note);
+    bits.push(e.gps_grid_key);
+    if (Array.isArray(e.tags)) bits.push(e.tags.join(" "));
+    if (e.gps && typeof e.gps === "object") {
+      bits.push(e.gps.label);
+      bits.push(e.gps.latitude);
+      bits.push(e.gps.longitude);
+      bits.push(e.gps.lat);
+      bits.push(e.gps.lng);
+      bits.push(e.gps.lon);
+    }
+    if (e.weather && typeof e.weather === "object") {
+      bits.push(e.weather.summary);
+      bits.push(e.weather.provider);
+    }
+    if (Array.isArray(e.photos)) {
+      e.photos.forEach(function (p) {
+        if (!p) return;
+        bits.push(p.caption);
+        bits.push(p.src);
+        bits.push(p.thumb);
+        bits.push(p.video);
+      });
+    }
+    return norm(bits.filter(Boolean).join(" "));
+  }
+
+  function matchesListQuery(e, qRaw) {
+    var q = String(qRaw || "").trim().toLowerCase();
+    if (!q) return true;
+    var hay = entrySearchText(e);
+    if (hay.indexOf(q) >= 0) return true;
+
+    var m = q.split(/[\s,，]+/).map(function (x) { return x.trim(); }).filter(Boolean);
+    if (m.length > 1) {
+      for (var i = 0; i < m.length; i++) {
+        if (hay.indexOf(m[i]) < 0) return false;
+      }
+      return true;
+    }
+    return false;
+  }
+
+  function getListFilterText() {
+    return listSearch ? String(listSearch.value || "").trim() : "";
+  }
+
+  function renderEntryListFromCache() {
+    var list = Array.isArray(allEntries) ? allEntries.slice() : [];
+    var q = getListFilterText();
+    var filtered = q ? list.filter(function (e) { return matchesListQuery(e, q); }) : list;
+
+    entryList.innerHTML = "";
+    var groups = groupEntriesByCalendarDay(filtered);
+    var dayCount = groups.filter(function (g) {
+      return g.dayKey !== "__nodate__";
+    }).length;
+    if (groups.some(function (g) {
+      return g.dayKey === "__nodate__";
+    })) {
+      dayCount += 1;
+    }
+
+    var base = "共 " + list.length + " 条 entry · " + dayCount + " 个日期";
+    if (q) {
+      listMsg.textContent = base + " · 命中 " + filtered.length + " 条（搜索：" + q + "）";
+    } else {
+      listMsg.textContent = base;
+    }
+    listMsg.className = "msg ok";
+
+    if (filtered.length === 0) {
+      var empty = document.createElement("div");
+      empty.className = "card";
+      empty.style.padding = "14px 16px";
+      empty.style.color = "var(--muted)";
+      empty.textContent = q ? "没有匹配的条目" : "暂无条目";
+      entryList.appendChild(empty);
+    } else {
+      groups.forEach(function (g) {
+        var section = document.createElement("section");
+        section.className = "day-group";
+        var h = document.createElement("h3");
+        h.className = "day-group__heading";
+        var label = formatDayHeading(g.dayKey);
+        h.appendChild(document.createTextNode(label));
+        var hint = document.createElement("span");
+        hint.className = "day-group__hint";
+        hint.textContent = "本日 " + g.entries.length + " 个地点/条目";
+        h.appendChild(hint);
+        var innerList = document.createElement("div");
+        innerList.className = "day-group__entries";
+        g.entries.forEach(function (e) {
+          appendEntryRow(innerList, e);
+        });
+        section.appendChild(h);
+        section.appendChild(innerList);
+        entryList.appendChild(section);
+      });
+    }
+
+    if (editingId) setActiveRow(editingId);
+  }
+
+  function scheduleRenderListFromCache() {
+    if (listFilterTimer) clearTimeout(listFilterTimer);
+    listFilterTimer = setTimeout(function () {
+      listFilterTimer = null;
+      renderEntryListFromCache();
+    }, 120);
+  }
+
+  async function loadList() {
+    listMsg.textContent = "加载中…";
+    listMsg.className = "msg";
+    entryList.innerHTML = "";
+    try {
+      const data = await api("/api/admin/photo-timeline/entries");
+      allEntries = data.entries || [];
+      renderEntryListFromCache();
+    } catch (err) {
+      listMsg.textContent = String(err.message || err);
+      listMsg.className = "msg err";
+      if (String(err.message || "").indexOf("401") >= 0 || String(err.message || "").indexOf("unauthorized") >= 0) {
+        setToken("");
+        await logoutServer();
+        showLogin();
+      }
+    }
+  }
+
+  function applyEntryFromQuery() {
+    var params = new URLSearchParams(window.location.search);
+    var q = params.get("entry");
+    if (!q) return Promise.resolve();
+    return api("/api/admin/photo-timeline/entry/" + encodeURIComponent(q))
+      .then(function (data) {
+        if (data && data.entry) {
+          openEdit(data.entry);
+          try {
+            history.replaceState({}, "", window.location.pathname + window.location.hash);
+          } catch (e) {}
+        }
+      })
+      .catch(function (e) {
+        listMsg.textContent = "无法打开条目：" + q + " — " + String(e.message || e);
+        listMsg.className = "msg err";
+      });
+  }
+
+  var loginCompare = document.getElementById("loginCompare");
+  function hideLoginCompare() {
+    loginCompare.classList.add("hidden");
+    loginCompare.innerHTML = "";
+  }
+  function renderLoginCompare(c) {
+    if (!c || typeof c !== "object") {
+      hideLoginCompare();
+      return;
+    }
+    loginCompare.classList.remove("hidden");
+    loginCompare.innerHTML =
+      '<table class="compare-table">' +
+      "<caption>字符对比（本次请求）</caption>" +
+      "<tr><th>项目</th><th>值</th></tr>" +
+      "<tr><td>请求里 Bearer 内字符串长度</td><td>" +
+      c.bearerTokenLength +
+      "</td></tr>" +
+      "<tr><td>服务端 .env 密钥长度</td><td>" +
+      c.envSecretLength +
+      "</td></tr>" +
+      "<tr><td>长度是否相同</td><td>" +
+      (c.lengthsEqual ? "是" : "否") +
+      "</td></tr>" +
+      "<tr><td>内容是否相同</td><td>" +
+      (c.bytesEqual ? "是" : "否") +
+      "</td></tr>" +
+      "</table>";
+  }
+
+  document.getElementById("btnLogin").addEventListener("click", async function () {
+    loginMsg.textContent = "";
+    hideLoginCompare();
+    const t = tokenInput.value.trim();
+    if (!t) {
+      loginMsg.textContent = "请输入密钥";
+      return;
+    }
+    setToken(t);
+    const reqUrl = apiUrl("/api/admin/photo-timeline/entries");
+    try {
+      const r = await fetch(reqUrl, { headers: authHeaders(), credentials: "same-origin" });
+      const raw = await r.text();
+      var data = {};
+      try {
+        data = JSON.parse(raw);
+      } catch (ignore) {}
+      if (!r.ok) {
+        setToken("");
+        await logoutServer();
+        if (r.status === 401 && data && data.compare) {
+          loginMsg.textContent = "未通过校验";
+          loginMsg.className = "msg err";
+          renderLoginCompare(data.compare);
+        } else {
+          loginMsg.textContent = (data && data.error) || r.statusText || String(r.status);
+          loginMsg.className = "msg err";
+        }
+        return;
+      }
+      loginMsg.textContent = "";
+      hideLoginCompare();
+      tokenInput.value = "";
+      showMain();
+      await loadList();
+      await applyEntryFromQuery();
+    } catch (e) {
+      setToken("");
+      logoutServer();
+      loginMsg.textContent = String((e && e.message) || e);
+      loginMsg.className = "msg err";
+    }
+  });
+
+  document.getElementById("btnLogout").addEventListener("click", function () {
+    setToken("");
+    hideLoginCompare();
+    closeEdit();
+    logoutServer();
+    showLogin();
+    allEntries = [];
+    if (listSearch) listSearch.value = "";
+    closeCreateModal();
+  });
+
+  function todayYmd() {
+    var d = new Date();
+    var y = d.getFullYear();
+    var m = String(d.getMonth() + 1).padStart(2, "0");
+    var day = String(d.getDate()).padStart(2, "0");
+    return y + "-" + m + "-" + day;
+  }
+
+  function openCreateModal() {
+    if (!createModal) return;
+    if (createMsg) {
+      createMsg.textContent = "";
+      createMsg.className = "msg";
+    }
+    if (cDate) cDate.value = todayYmd();
+    if (cTitle) cTitle.value = "";
+    if (cPlace) cPlace.value = "";
+    if (cGpsLabel) cGpsLabel.value = "";
+    if (cTags) cTags.value = "";
+    if (cLat) cLat.value = "";
+    if (cLng) cLng.value = "";
+    if (cNote) cNote.value = "";
+    createModal.classList.remove("hidden");
+    try {
+      if (cDate) cDate.focus();
+      else if (cTitle) cTitle.focus();
+    } catch (e) {}
+  }
+
+  function closeCreateModal() {
+    if (!createModal) return;
+    createModal.classList.add("hidden");
+  }
+
+  if (btnNewEntry) {
+    btnNewEntry.addEventListener("click", function () {
+      openCreateModal();
+    });
+  }
+  if (btnCreateCancel) {
+    btnCreateCancel.addEventListener("click", function () {
+      closeCreateModal();
+    });
+  }
+  if (createModal) {
+    createModal.addEventListener("click", function (ev) {
+      if (ev.target === createModal) closeCreateModal();
+    });
+  }
+  document.addEventListener("keydown", function (ev) {
+    if (ev.key === "Escape" && createModal && !createModal.classList.contains("hidden")) {
+      closeCreateModal();
+    }
+  });
+
+  if (listSearch) {
+    listSearch.addEventListener("input", function () {
+      scheduleRenderListFromCache();
+    });
+  }
+  if (btnSearchClear) {
+    btnSearchClear.addEventListener("click", function () {
+      if (listSearch) listSearch.value = "";
+      scheduleRenderListFromCache();
+    });
+  }
+
+  if (btnCreateSubmit) {
+    btnCreateSubmit.addEventListener("click", async function () {
+      if (createMsg) {
+        createMsg.textContent = "创建中…";
+        createMsg.className = "msg";
+      }
+      try {
+        var ymd = cDate ? String(cDate.value || "").trim() : "";
+        if (!/^\d{4}-\d{2}-\d{2}$/.test(ymd)) {
+          throw new Error("请选择有效日期");
+        }
+        var tagsRaw = cTags
+          ? String(cTags.value || "")
+              .split(/[,，]/)
+              .map(function (s) { return s.trim(); })
+              .filter(Boolean)
+          : [];
+
+        var gps = {};
+        var glab = cGpsLabel ? String(cGpsLabel.value || "").trim() : "";
+        var latRaw = cLat ? String(cLat.value || "").trim() : "";
+        var lngRaw = cLng ? String(cLng.value || "").trim() : "";
+        if ((latRaw && !lngRaw) || (!latRaw && lngRaw)) {
+          throw new Error("GPS：纬度/经度需成对填写，或都留空");
+        }
+        if (latRaw && lngRaw) {
+          var la = Number(latRaw);
+          var ln = Number(lngRaw);
+          if (!Number.isFinite(la) || !Number.isFinite(ln)) {
+            throw new Error("GPS：纬度/经度需为数字");
+          }
+          gps.latitude = la;
+          gps.longitude = ln;
+        }
+        if (glab) gps.label = glab;
+
+        var created = await api("/api/admin/photo-timeline/entry", {
+          method: "POST",
+          body: JSON.stringify({
+            date: ymd,
+            title: cTitle ? cTitle.value : "",
+            place: cPlace ? cPlace.value : "",
+            note: cNote ? cNote.value : "",
+            tags: tagsRaw,
+            gps: gps,
+          }),
+        });
+        if (createMsg) {
+          createMsg.textContent = "已创建";
+          createMsg.className = "msg ok";
+        }
+        closeCreateModal();
+        listMsg.textContent = "已创建条目";
+        listMsg.className = "msg ok";
+        await loadList();
+        if (created && created.entry) {
+          openEdit(created.entry);
+        }
+      } catch (e) {
+        if (createMsg) {
+          createMsg.textContent = String(e.message || e);
+          createMsg.className = "msg err";
+        }
+      }
+    });
+  }
+
+  document.getElementById("btnReload").addEventListener("click", loadList);
+  document.getElementById("btnCancel").addEventListener("click", closeEdit);
+
+  if (btnDeleteEntry) {
+    btnDeleteEntry.addEventListener("click", async function () {
+      if (!editingId) return;
+      try {
+        editMsg.textContent = "";
+        editMsg.className = "msg";
+        var ok = await deleteEntryById(editingId, "条目 id：" + editingId);
+        if (!ok) return;
+        closeEdit();
+        listMsg.textContent = "已删除条目";
+        listMsg.className = "msg ok";
+        await loadList();
+      } catch (e) {
+        editMsg.textContent = String(e.message || e);
+        editMsg.className = "msg err";
+      }
+    });
+  }
+
+  document.getElementById("btnSave").addEventListener("click", async function () {
+    if (!editingId) return;
+    editMsg.textContent = "保存中…";
+    editMsg.className = "msg";
+    const tagsRaw = fTags.value.split(/[,，]/).map(function (s) { return s.trim(); }).filter(Boolean);
+    try {
+      var gpsPatch = {};
+      if (fGpsLabel || fGpsLat || fGpsLng) {
+        var glab = fGpsLabel ? String(fGpsLabel.value || "").trim() : "";
+        var latRaw = fGpsLat ? String(fGpsLat.value || "").trim() : "";
+        var lngRaw = fGpsLng ? String(fGpsLng.value || "").trim() : "";
+        if ((latRaw && !lngRaw) || (!latRaw && lngRaw)) {
+          throw new Error("GPS：纬度/经度需成对填写，或都留空");
+        }
+        if (latRaw && lngRaw) {
+          var la = Number(latRaw);
+          var ln = Number(lngRaw);
+          if (!Number.isFinite(la) || !Number.isFinite(ln)) {
+            throw new Error("GPS：纬度/经度需为数字");
+          }
+          gpsPatch.latitude = la;
+          gpsPatch.longitude = ln;
+        }
+        if (glab) gpsPatch.label = glab;
+      }
+
+      var saved = await api("/api/admin/photo-timeline/entry/" + encodeURIComponent(editingId), {
+        method: "PUT",
+        body: JSON.stringify({
+          title: fTitle.value,
+          place: fPlace.value,
+          note: fNote.value,
+          tags: tagsRaw,
+          gps: gpsPatch,
+        }),
+      });
+      editMsg.textContent = "已保存";
+      editMsg.className = "msg ok";
+      if (saved && saved.entry) openEdit(saved.entry);
+      loadList();
+    } catch (e) {
+      editMsg.textContent = String(e.message || e);
+      editMsg.className = "msg err";
+    }
+  });
+
+  (async function boot() {
+    if (getToken()) {
+      showMain();
+      await loadList();
+      await applyEntryFromQuery();
+      return;
+    }
+    const ok = await tryResumeWithCookieSession();
+    if (ok) {
+      showMain();
+      await loadList();
+      await applyEntryFromQuery();
+      return;
+    }
+    (function () {
+      var params = new URLSearchParams(window.location.search);
+      if (params.get("entry")) {
+        loginMsg.textContent = "登录后将打开对应条目的编辑";
+        loginMsg.className = "msg ok";
+      }
+    })();
+  })();
+})();
+  </script>
+</body>
+</html>
+

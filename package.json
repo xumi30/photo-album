@@ -1,0 +1,24 @@
+{
+  "name": "photo-album",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=18"
+  },
+  "scripts": {
+    "vendorize": "node scripts/vendorize-from-parent.mjs",
+    "start": "node server/index.js",
+    "dev": "node --watch server/index.js",
+    "sync-photo-timeline": "node server/photo-timeline-cli.mjs",
+    "dev:client": "vite"
+  },
+  "dependencies": {
+    "better-sqlite3": "^11.7.0",
+    "dotenv": "^16.4.5",
+    "express": "^4.21.2"
+  },
+  "devDependencies": {
+    "vite": "^6.2.5"
+  }
+}
+

@@ -1,0 +1,141 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta
+      name="description"
+      content="时间像一段慢慢展开的生活叙事，按日展示随手拍照片"
+    />
+    <title>生活时间轴 · 照片册</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Noto+Serif+SC:wght@400;500;600;700&family=Noto+Sans+SC:wght@300;400;500;700&family=ZCOOL+XiaoWei&family=Ma+Shan+Zheng&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="stylesheet" href="./assets/styles/photo-timeline.css" />
+  </head>
+  <body>
+
+    <header class="hero">
+      <div class="hero-ink">
+        <svg class="ink-1" viewBox="0 0 200 200" xmlns="http://www.w3.org/2000/svg">
+          <circle cx="100" cy="100" r="80" fill="none" stroke="currentColor" stroke-width="0.5" opacity="0.6"/>
+          <circle cx="100" cy="100" r="55" fill="none" stroke="currentColor" stroke-width="0.3" opacity="0.4"/>
+          <circle cx="100" cy="100" r="30" fill="currentColor" opacity="0.08"/>
+          <path d="M20,100 Q60,60 100,100 T180,100" fill="none" stroke="currentColor" stroke-width="0.8" opacity="0.3"/>
+        </svg>
+        <svg class="ink-2" viewBox="0 0 200 200" xmlns="http://www.w3.org/2000/svg">
+          <ellipse cx="100" cy="100" rx="90" ry="60" fill="none" stroke="currentColor" stroke-width="0.4" opacity="0.4"/>
+          <path d="M30,120 Q80,40 170,110" fill="none" stroke="currentColor" stroke-width="0.6" opacity="0.3"/>
+        </svg>
+      </div>
+
+      <div class="hero-content">
+        <p class="hero-eyebrow">PHOTO · TIMELINE</p>
+        <h1 class="hero-title">生活，沿着时间慢慢展开</h1>
+        <p class="hero-sub">
+          一些普通日子里的随手快照，不刻意也不完美。<br/>
+          把它们挂在时间线上，像晾衣绳上还没干透的记忆。
+        </p>
+        <div class="hero-divider"></div>
+      </div>
+
+      <div class="hero-scroll">
+        <span>向下浏览</span>
+      </div>
+    </header>
+
+    <main class="page">
+
+      <section class="filter-section">
+        <div class="filter-bar">
+          <input
+            id="searchInput"
+            type="search"
+            aria-label="搜索关键词"
+            placeholder="搜索地名、备注、标签…"
+          />
+          <select id="sortSelect" aria-label="时间排序">
+            <option value="desc">时间 · 从新到旧</option>
+            <option value="asc">时间 · 从旧到新</option>
+          </select>
+          <input id="jumpDateInput" type="date" aria-label="跳到日期" />
+          <button type="button" id="jumpDateBtn">跳到这天</button>
+        </div>
+        <div class="chips" id="tagWrap"></div>
+        <div class="filter-meta">
+          <span id="countText">加载中…</span>
+          <div class="filter-meta__actions">
+            <a class="filter-meta__link" href="./photo-map.html" target="_blank" rel="noopener noreferrer">地图分布</a>
+            <button type="button" id="clearBtn">清空筛选</button>
+          </div>
+        </div>
+        <div class="year-jump" id="yearJumpWrap" aria-label="按年份跳转"></div>
+      </section>
+
+      <section class="timeline" id="timeline"></section>
+
+      <div class="load-more">
+        <button type="button" id="loadMore">展开更多时光</button>
+      </div>
+
+      <div id="emptyState" class="empty" style="display:none;">
+        <strong>什么都没找到</strong>
+        <span>换个关键词试试，或清空筛选。</span>
+      </div>
+
+      <footer class="footer-poem">
+        <p>光阴者，百代之过客也</p>
+        <span class="footer-mark">—— 照片册 · 时间轴</span>
+      </footer>
+
+    </main>
+
+    <div class="time-rail" id="timeRail">
+      <button type="button" id="timeRailToggle" class="time-rail__toggle" aria-expanded="false">
+        时间索引
+      </button>
+      <div class="time-rail__panel" id="timeRailPanel" hidden></div>
+    </div>
+
+    <div class="lightbox" id="lightbox" role="dialog" aria-modal="true" aria-label="图片查看器">
+      <button id="lightboxClose" class="lightbox-close" aria-label="关闭">×</button>
+      <div class="lightbox-content">
+        <div class="lightbox-inner">
+          <button id="prevBtn" class="lightbox-nav" aria-label="上一张">‹</button>
+          <div class="lightbox-photo" id="lightboxPhoto">
+            <img id="lightboxImage" src="" alt="" />
+            <video
+              id="lightboxVideo"
+              muted
+              playsinline
+              preload="metadata"
+              style="display: none"
+            ></video>
+            <button
+              type="button"
+              id="lightboxMuteBtn"
+              class="lightbox-mute-btn"
+              aria-label="取消静音"
+              title="切换静音"
+              style="display: none"
+            >
+              <span id="lightboxMuteIcon" class="lightbox-mute-btn__svg" aria-hidden="true"></span>
+            </button>
+          </div>
+          <button id="nextBtn" class="lightbox-nav" aria-label="下一张">›</button>
+        </div>
+        <div class="lightbox-info">
+          <p id="lightboxMeta" class="lightbox-meta"></p>
+          <p id="lightboxCaption" class="lightbox-caption"></p>
+        </div>
+      </div>
+    </div>
+
+    <script src="./assets/scripts/photo-timeline-config.js"></script>
+    <script src="./assets/scripts/photo-timeline-page.js" defer></script>
+  </body>
+</html>
+

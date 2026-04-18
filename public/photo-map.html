@@ -1,0 +1,71 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="description" content="在地图上查看照片分布" />
+    <title>照片地图 · 分布</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Noto+Serif+SC:wght@400;500;600;700&family=Noto+Sans+SC:wght@300;400;500;700&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="stylesheet" href="./assets/styles/photo-map.css" />
+  </head>
+  <body>
+    <header class="map-hero">
+      <div>
+        <p class="map-hero__eyebrow">PHOTO · MAP</p>
+        <h1>照片分布地图</h1>
+        <p class="map-hero__sub">
+          把每一个拍摄点放回地图里，看看这些日子曾经散落在哪些地方。
+        </p>
+      </div>
+      <div class="map-hero__actions">
+        <a class="map-hero__link" href="./photo-timeline.html">时间轴</a>
+      </div>
+    </header>
+
+    <main class="map-layout">
+      <aside class="map-sidebar">
+        <div class="map-panel">
+          <label class="map-label" for="mapSearchInput">搜索地点或标题</label>
+          <input id="mapSearchInput" type="search" placeholder="搜索地名、日期、备注…" />
+        </div>
+        <div class="map-panel map-stats" id="mapStats">
+          <div class="map-stat">
+            <span class="map-stat__label">总点位</span>
+            <strong id="statTotal">-</strong>
+          </div>
+          <div class="map-stat">
+            <span class="map-stat__label">当前筛选</span>
+            <strong id="statVisible">-</strong>
+          </div>
+          <div class="map-stat">
+            <span class="map-stat__label">地点覆盖</span>
+            <strong id="statPlaces">-</strong>
+          </div>
+        </div>
+        <div class="map-panel">
+          <div class="map-panel__head">
+            <h2>点位列表</h2>
+            <span id="mapStatus">加载中…</span>
+          </div>
+          <div id="mapPointList" class="map-point-list"></div>
+        </div>
+      </aside>
+
+      <section class="map-main">
+        <div id="mapCanvas" class="map-canvas" aria-label="照片地图"></div>
+        <div id="mapEmptyState" class="map-empty" hidden>
+          <strong>没有可显示的位置</strong>
+          <span>请先确认照片已经同步到时间轴，并且带有 GPS 信息。</span>
+        </div>
+      </section>
+    </main>
+
+    <script src="./assets/scripts/photo-map-page.js" defer></script>
+  </body>
+</html>
+
