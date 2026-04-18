@@ -91,6 +91,120 @@
       width: min(720px, 100%);
       margin-top: 6vh;
     }
+    .modal__card--wide {
+      width: min(1100px, 100%);
+    }
+    .bulk-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(120px, 1fr));
+      gap: 10px;
+      margin-top: 12px;
+    }
+    .bulk-item {
+      position: relative;
+      border-radius: 10px;
+      overflow: hidden;
+      border: 1px solid var(--border);
+      background: #0a0c12;
+      cursor: pointer;
+      aspect-ratio: 1 / 1;
+    }
+    .bulk-item img {
+      width: 100%;
+      height: 100%;
+      object-fit: cover;
+      display: block;
+    }
+    .bulk-item__fallback {
+      width: 100%;
+      height: 100%;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      color: var(--muted);
+      font-size: 0.8rem;
+      padding: 10px;
+      text-align: center;
+      line-height: 1.35;
+    }
+    .bulk-item__meta {
+      position: absolute;
+      left: 8px;
+      right: 8px;
+      bottom: 8px;
+      display: flex;
+      gap: 6px;
+      align-items: center;
+      justify-content: space-between;
+      pointer-events: none;
+    }
+    .bulk-pill {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      padding: 2px 8px;
+      border-radius: 999px;
+      border: 1px solid rgba(255, 255, 255, 0.18);
+      background: rgba(10, 12, 18, 0.45);
+      color: rgba(255, 255, 255, 0.88);
+      font-size: 0.72rem;
+      backdrop-filter: blur(6px);
+      max-width: 100%;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    .bulk-pill--private {
+      border-color: rgba(240, 113, 120, 0.45);
+      background: rgba(240, 113, 120, 0.12);
+      color: #ffd7da;
+    }
+    .bulk-check {
+      position: absolute;
+      top: 8px;
+      right: 8px;
+      width: 22px;
+      height: 22px;
+      border-radius: 999px;
+      border: 1px solid rgba(255, 255, 255, 0.26);
+      background: rgba(10, 12, 18, 0.35);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      color: rgba(255, 255, 255, 0.88);
+      font-size: 14px;
+      line-height: 1;
+      backdrop-filter: blur(6px);
+    }
+    .bulk-item.is-selected {
+      border-color: rgba(107, 140, 255, 0.9);
+      box-shadow: 0 0 0 2px rgba(107, 140, 255, 0.15);
+    }
+    .bulk-item.is-selected .bulk-check {
+      background: rgba(107, 140, 255, 0.28);
+      border-color: rgba(107, 140, 255, 0.75);
+    }
+    .bulk-bar {
+      position: sticky;
+      bottom: 0;
+      margin-top: 12px;
+      padding: 10px 12px;
+      border-radius: 10px;
+      border: 1px solid var(--border);
+      background: rgba(18, 21, 28, 0.92);
+      backdrop-filter: blur(8px);
+      display: flex;
+      gap: 10px;
+      align-items: center;
+      flex-wrap: wrap;
+    }
+    .bulk-bar__spacer { flex: 1; }
+    .bulk-head {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+    .bulk-head__spacer { flex: 1; }
     .msg { font-size: 0.88rem; min-height: 1.4em; }
     .msg.err { color: var(--err); }
     .msg.ok { color: var(--ok); }
@@ -177,6 +291,27 @@
       border-color: rgba(240, 113, 120, 0.55);
       color: #ffecec;
     }
+    .thumb-vis {
+      position: absolute;
+      right: 6px;
+      bottom: 6px;
+      max-width: calc(100% - 12px);
+      border: 1px solid rgba(255, 255, 255, 0.22);
+      background: rgba(10, 12, 18, 0.35);
+      color: rgba(255, 255, 255, 0.86);
+      border-radius: 8px;
+      padding: 3px 6px;
+      font-size: 12px;
+      outline: none;
+      backdrop-filter: blur(6px);
+      appearance: none;
+      -webkit-appearance: none;
+      cursor: pointer;
+    }
+    .thumb-vis:focus-visible {
+      border-color: rgba(107, 140, 255, 0.9);
+      box-shadow: 0 0 0 2px rgba(107, 140, 255, 0.18);
+    }
     .item-thumb img { width: 100%; height: 100%; object-fit: cover; display: block; }
     .item-thumb--empty {
       display: flex; align-items: center; justify-content: center; color: var(--muted);
@@ -248,6 +383,7 @@
     <div id="mainPanel" class="hidden">
       <div class="toolbar">
         <button type="button" id="btnNewEntry">新增 entry</button>
+        <button type="button" id="btnBulkPhotos" class="secondary">批量照片</button>
         <button type="button" id="btnReload">刷新列表</button>
         <button type="button" id="btnLogout" class="secondary">退出</button>
         <span style="color: var(--muted); font-size: 0.88rem;">前台时间轴：<a href="/photo-timeline.html">/photo-timeline.html</a></span>
@@ -328,6 +464,14 @@
         </div>
         <div class="row">
           <div>
+            <label style="display:flex; align-items:center; gap:10px;">
+              <input type="checkbox" id="fEntryPrivate" />
+              <span>需登录可见（未登录时隐藏整个条目与照片）</span>
+            </label>
+          </div>
+        </div>
+        <div class="row">
+          <div>
             <label for="fNote">备注</label>
             <textarea id="fNote"></textarea>
           </div>
@@ -389,11 +533,66 @@
             <textarea id="cNote" placeholder="可选"></textarea>
           </div>
         </div>
+        <div class="row">
+          <div>
+            <label style="display:flex; align-items:center; gap:10px;">
+              <input type="checkbox" id="cEntryPrivate" />
+              <span>需登录可见（未登录时隐藏整个条目与照片）</span>
+            </label>
+          </div>
+        </div>
+        <div class="row">
+          <div>
+            <label for="cPhotos">照片（JSON）</label>
+            <textarea id="cPhotos" placeholder='例如：[{"preview":"assets/live/.../preview.jpg","thum":"assets/live/.../thumb.jpg","mov":"assets/live/.../a.mov"}] 或 [{"livp":"assets/live/.../a.livp"}]'></textarea>
+            <p style="margin: 6px 0 0; color: var(--muted); font-size: 0.82rem;">
+              可只填 <code>preview</code> 或 <code>thum</code>（缺的默认同一个）；<code>mov</code> 可不填（若 preview/thum 本身是视频则自动补齐）。
+              也支持 <code>thumb/src/video</code> 字段名；上传 <code>livp</code> 时会调用 <code>tool/livp_extractor.py</code> 处理。
+            </p>
+          </div>
+        </div>
         <div class="toolbar">
           <button type="button" id="btnCreateSubmit">创建</button>
           <button type="button" id="btnCreateCancel" class="secondary">取消</button>
         </div>
         <p id="createMsg" class="msg"></p>
+      </div>
+    </div>
+
+    <div id="bulkPhotosModal" class="modal hidden" role="dialog" aria-modal="true" aria-label="批量照片">
+      <div class="card modal__card modal__card--wide">
+        <div class="bulk-head">
+          <h2 style="font-size: 1.05rem; margin: 0;">批量照片</h2>
+          <span style="color: var(--muted); font-size: 0.85rem;">缩略图网格 · 多选批量修改可见性</span>
+          <span class="bulk-head__spacer"></span>
+          <button type="button" id="btnBulkClose" class="secondary">关闭</button>
+        </div>
+        <div class="toolbar" style="margin-top: 12px;">
+          <input type="search" id="bulkSearch" placeholder="搜索：标题 / 备注 / 文件名 / entry id…" aria-label="搜索照片" />
+          <select id="bulkVisFilter" aria-label="按照片可见性筛选">
+            <option value="all">照片：全部</option>
+            <option value="public">照片：公开</option>
+            <option value="private">照片：需登录</option>
+          </select>
+          <select id="bulkEntryVisFilter" aria-label="按条目可见性筛选">
+            <option value="all">条目：全部</option>
+            <option value="public">条目：公开</option>
+            <option value="private">条目：需登录</option>
+          </select>
+          <button type="button" id="btnBulkReload" class="secondary">重新加载</button>
+          <span class="toolbar__spacer"></span>
+          <button type="button" id="btnBulkLoadMore" class="secondary">加载更多</button>
+        </div>
+        <p id="bulkMsg" class="msg"></p>
+        <div id="bulkPhotosGrid" class="bulk-grid" aria-label="照片网格"></div>
+        <div class="bulk-bar" aria-label="批量操作栏">
+          <span id="bulkSelectedText" style="color: var(--muted); font-size: 0.88rem;">已选 0</span>
+          <button type="button" id="btnBulkSelectAll" class="secondary">全选（已加载）</button>
+          <button type="button" id="btnBulkClearSel" class="secondary">清空选择</button>
+          <span class="bulk-bar__spacer"></span>
+          <button type="button" id="btnBulkSetPublic">设为公开</button>
+          <button type="button" id="btnBulkSetPrivate" class="danger">设为需登录</button>
+        </div>
       </div>
     </div>
   </div>
@@ -418,12 +617,14 @@
   const fGpsLng = document.getElementById("fGpsLng");
   const fPlace = document.getElementById("fPlace");
   const fTags = document.getElementById("fTags");
+  const fEntryPrivate = document.getElementById("fEntryPrivate");
   const fNote = document.getElementById("fNote");
   const editMsg = document.getElementById("editMsg");
   const editGridKey = document.getElementById("editGridKey");
   const editSummary = document.getElementById("editSummary");
   const btnDeleteEntry = document.getElementById("btnDeleteEntry");
   const btnNewEntry = document.getElementById("btnNewEntry");
+  const btnBulkPhotos = document.getElementById("btnBulkPhotos");
   const listSearch = document.getElementById("listSearch");
   const btnSearchClear = document.getElementById("btnSearchClear");
 
@@ -436,12 +637,42 @@
   const cLat = document.getElementById("cLat");
   const cLng = document.getElementById("cLng");
   const cNote = document.getElementById("cNote");
+  const cEntryPrivate = document.getElementById("cEntryPrivate");
+  const cPhotos = document.getElementById("cPhotos");
   const btnCreateSubmit = document.getElementById("btnCreateSubmit");
   const btnCreateCancel = document.getElementById("btnCreateCancel");
   const createMsg = document.getElementById("createMsg");
 
+  const bulkPhotosModal = document.getElementById("bulkPhotosModal");
+  const btnBulkClose = document.getElementById("btnBulkClose");
+  const bulkSearch = document.getElementById("bulkSearch");
+  const bulkVisFilter = document.getElementById("bulkVisFilter");
+  const bulkEntryVisFilter = document.getElementById("bulkEntryVisFilter");
+  const btnBulkReload = document.getElementById("btnBulkReload");
+  const btnBulkLoadMore = document.getElementById("btnBulkLoadMore");
+  const bulkMsg = document.getElementById("bulkMsg");
+  const bulkPhotosGrid = document.getElementById("bulkPhotosGrid");
+  const bulkSelectedText = document.getElementById("bulkSelectedText");
+  const btnBulkSelectAll = document.getElementById("btnBulkSelectAll");
+  const btnBulkClearSel = document.getElementById("btnBulkClearSel");
+  const btnBulkSetPublic = document.getElementById("btnBulkSetPublic");
+  const btnBulkSetPrivate = document.getElementById("btnBulkSetPrivate");
+
   let allEntries = [];
   let listFilterTimer = null;
+
+  const bulkState = {
+    items: [],
+    offset: 0,
+    nextOffset: 0,
+    total: 0,
+    loading: false,
+    selected: new Set(),
+    lastClickIndex: -1,
+    q: "",
+    vis: "all",
+    entryVis: "all",
+  };
 
   const safeLocalStorage = {
     get(key) {
@@ -578,6 +809,202 @@
     return "/" + s.replace(/^\/+/, "");
   }
 
+  function updateBulkSelectedText() {
+    if (!bulkSelectedText) return;
+    bulkSelectedText.textContent = "已选 " + bulkState.selected.size;
+  }
+
+  function bulkItemKey(item) {
+    return item && item.photoId != null ? String(item.photoId) : "";
+  }
+
+  function renderBulkGrid() {
+    if (!bulkPhotosGrid) return;
+    bulkPhotosGrid.innerHTML = "";
+    bulkState.items.forEach(function (it, idx) {
+      var pid = it && it.photoId != null ? Number(it.photoId) : NaN;
+      if (!Number.isFinite(pid) || pid <= 0) return;
+
+      var cell = document.createElement("div");
+      cell.className = "bulk-item";
+      cell.tabIndex = 0;
+      cell.dataset.photoId = String(pid);
+      cell.dataset.index = String(idx);
+      if (bulkState.selected.has(String(pid))) cell.classList.add("is-selected");
+
+      var imgSrc = mediaUrl((it.thumb && String(it.thumb)) || (it.src && String(it.src)) || "");
+      if (imgSrc) {
+        var im = document.createElement("img");
+        im.loading = "lazy";
+        im.alt = it.caption || it.title || "photo";
+        im.src = imgSrc;
+        im.onerror = function () {
+          im.replaceWith(document.createElement("div"));
+        };
+        cell.appendChild(im);
+      } else {
+        var fb = document.createElement("div");
+        fb.className = "bulk-item__fallback";
+        fb.textContent = "无缩略图";
+        cell.appendChild(fb);
+      }
+
+      var check = document.createElement("div");
+      check.className = "bulk-check";
+      check.textContent = bulkState.selected.has(String(pid)) ? "✓" : "";
+      cell.appendChild(check);
+
+      var meta = document.createElement("div");
+      meta.className = "bulk-item__meta";
+      var left = document.createElement("span");
+      left.className = "bulk-pill";
+      left.textContent = (it.calendarDate || it.date || "").slice(0, 10) || (it.entryId || "");
+      meta.appendChild(left);
+      var right = document.createElement("span");
+      var vis = it.visibility != null ? String(it.visibility).toLowerCase() : "public";
+      var evis = it.entryVisibility != null ? String(it.entryVisibility).toLowerCase() : "public";
+      var needLogin = (vis === "private") || (evis === "private");
+      right.className = "bulk-pill" + (needLogin ? " bulk-pill--private" : "");
+      right.textContent = needLogin ? "需登录" : "公开";
+      meta.appendChild(right);
+      cell.appendChild(meta);
+
+      cell.addEventListener("click", function (ev) {
+        ev.preventDefault();
+        var id = String(pid);
+        var isShift = !!ev.shiftKey;
+        if (isShift && bulkState.lastClickIndex >= 0) {
+          var a = Math.min(bulkState.lastClickIndex, idx);
+          var b = Math.max(bulkState.lastClickIndex, idx);
+          for (var i = a; i <= b; i++) {
+            var p2 = bulkState.items[i];
+            var pid2 = p2 && p2.photoId != null ? String(p2.photoId) : "";
+            if (pid2) bulkState.selected.add(pid2);
+          }
+        } else {
+          if (bulkState.selected.has(id)) bulkState.selected.delete(id);
+          else bulkState.selected.add(id);
+          bulkState.lastClickIndex = idx;
+        }
+        updateBulkSelectedText();
+        renderBulkGrid();
+      });
+      cell.addEventListener("keydown", function (ev) {
+        if (ev.key === " " || ev.key === "Enter") {
+          ev.preventDefault();
+          cell.click();
+        }
+      });
+
+      bulkPhotosGrid.appendChild(cell);
+    });
+    updateBulkSelectedText();
+  }
+
+  async function fetchBulkPhotosPage(options) {
+    var opt = options && typeof options === "object" ? options : {};
+    var offset = Math.max(0, Math.floor(Number(opt.offset) || 0));
+    var limit = Math.max(1, Math.min(2000, Math.floor(Number(opt.limit) || 500)));
+    var url =
+      "/api/admin/photo-timeline/photos?offset=" +
+      encodeURIComponent(String(offset)) +
+      "&limit=" +
+      encodeURIComponent(String(limit)) +
+      "&q=" +
+      encodeURIComponent(String(bulkState.q || "")) +
+      "&vis=" +
+      encodeURIComponent(String(bulkState.vis || "all")) +
+      "&entryVis=" +
+      encodeURIComponent(String(bulkState.entryVis || "all"));
+    var data = await api(url, { method: "GET" });
+    return data;
+  }
+
+  async function loadBulkPhotos(reset) {
+    if (!bulkPhotosModal || !bulkPhotosGrid) return;
+    if (bulkState.loading) return;
+    bulkState.loading = true;
+    if (bulkMsg) {
+      bulkMsg.textContent = reset ? "加载中…" : "加载更多…";
+      bulkMsg.className = "msg";
+    }
+    try {
+      if (reset) {
+        bulkState.items = [];
+        bulkState.selected = new Set();
+        bulkState.lastClickIndex = -1;
+        bulkState.offset = 0;
+      }
+      var data = await fetchBulkPhotosPage({ offset: bulkState.items.length, limit: 500 });
+      var items = data && Array.isArray(data.items) ? data.items : [];
+      bulkState.total = typeof data.total === "number" ? data.total : bulkState.items.length + items.length;
+      bulkState.items = bulkState.items.concat(items);
+      bulkState.nextOffset = data.nextOffset != null ? Number(data.nextOffset) : null;
+      if (btnBulkLoadMore) btnBulkLoadMore.disabled = bulkState.nextOffset == null;
+      renderBulkGrid();
+      if (bulkMsg) {
+        bulkMsg.textContent = "已加载 " + bulkState.items.length + " / " + bulkState.total;
+        bulkMsg.className = "msg ok";
+      }
+    } catch (e) {
+      if (bulkMsg) {
+        bulkMsg.textContent = String(e.message || e);
+        bulkMsg.className = "msg err";
+      }
+    } finally {
+      bulkState.loading = false;
+    }
+  }
+
+  function openBulkPhotosModal() {
+    if (!bulkPhotosModal) return;
+    bulkPhotosModal.classList.remove("hidden");
+    if (bulkSearch) bulkSearch.value = "";
+    if (bulkVisFilter) bulkVisFilter.value = "all";
+    if (bulkEntryVisFilter) bulkEntryVisFilter.value = "all";
+    bulkState.q = "";
+    bulkState.vis = "all";
+    bulkState.entryVis = "all";
+    loadBulkPhotos(true);
+    try { if (bulkSearch) bulkSearch.focus(); } catch (e) {}
+  }
+
+  function closeBulkPhotosModal() {
+    if (!bulkPhotosModal) return;
+    bulkPhotosModal.classList.add("hidden");
+  }
+
+  async function bulkSetVisibility(nextVis) {
+    var vis = String(nextVis || "").trim().toLowerCase() === "private" ? "private" : "public";
+    var ids = Array.from(bulkState.selected.values()).map(function (x) { return Math.floor(Number(x)); }).filter(function (n) { return Number.isFinite(n) && n > 0; });
+    if (!ids.length) return;
+    if (!confirmTwice("确定批量修改可见性？", "将修改 " + ids.length + " 张照片为：" + (vis === "private" ? "需登录" : "公开"))) {
+      return;
+    }
+    if (bulkMsg) {
+      bulkMsg.textContent = "提交中…";
+      bulkMsg.className = "msg";
+    }
+    await api("/api/admin/photo-timeline/photos/batch-visibility", {
+      method: "POST",
+      body: JSON.stringify({ photoIds: ids, visibility: vis }),
+    });
+    // 乐观更新本地数据
+    bulkState.items.forEach(function (it) {
+      if (!it || it.photoId == null) return;
+      var k = String(it.photoId);
+      if (bulkState.selected.has(k)) it.visibility = vis;
+    });
+    bulkState.selected = new Set();
+    renderBulkGrid();
+    if (bulkMsg) {
+      bulkMsg.textContent = "已更新可见性";
+      bulkMsg.className = "msg ok";
+    }
+    // 刷新条目列表（缩略图/可见性提示）
+    loadList();
+  }
+
   function firstThumbSrc(entry) {
     var photos = entry.photos;
     if (!Array.isArray(photos) || !photos.length) return "";
@@ -629,6 +1056,20 @@
     return true;
   }
 
+  async function updatePhotoVisibility(entryId, photoId, visibility) {
+    var eid = String(entryId || "").trim();
+    var pid = Number(photoId);
+    if (!eid || !Number.isFinite(pid) || pid <= 0) throw new Error("invalid photo id");
+    await api(
+      "/api/admin/photo-timeline/entry/" + encodeURIComponent(eid) + "/photo/" + encodeURIComponent(String(pid)),
+      {
+        method: "PUT",
+        body: JSON.stringify({ visibility: visibility }),
+      }
+    );
+    return true;
+  }
+
   function fillEditThumbs(entry) {
     editThumbs.innerHTML = "";
     var photos = entry.photos;
@@ -663,6 +1104,42 @@
 
       var pid = p && p.id != null ? Number(p.id) : NaN;
       if (Number.isFinite(pid) && pid > 0 && entry && entry.id) {
+        var sel = document.createElement("select");
+        sel.className = "thumb-vis";
+        sel.title = "可见性（公开/需登录）";
+        var optPublic = document.createElement("option");
+        optPublic.value = "public";
+        optPublic.textContent = "公开";
+        var optPrivate = document.createElement("option");
+        optPrivate.value = "private";
+        optPrivate.textContent = "需登录";
+        sel.appendChild(optPublic);
+        sel.appendChild(optPrivate);
+        var vis = (p && p.visibility) ? String(p.visibility).toLowerCase() : "public";
+        sel.value = (vis === "private" || vis === "login" || vis === "authed") ? "private" : "public";
+        sel.addEventListener("click", function (ev) {
+          ev.stopPropagation();
+        });
+        sel.addEventListener("change", async function (ev) {
+          ev.preventDefault();
+          ev.stopPropagation();
+          try {
+            var next = String(sel.value || "public");
+            await updatePhotoVisibility(entry.id, pid, next);
+            editMsg.textContent = "已更新可见性";
+            editMsg.className = "msg ok";
+            var latest = await api("/api/admin/photo-timeline/entry/" + encodeURIComponent(String(entry.id)));
+            if (latest && latest.entry) openEdit(latest.entry);
+            loadList();
+          } catch (err) {
+            editMsg.textContent = String(err.message || err);
+            editMsg.className = "msg err";
+            // rollback ui
+            sel.value = (vis === "private" || vis === "login" || vis === "authed") ? "private" : "public";
+          }
+        });
+        wrap.appendChild(sel);
+
         var del = document.createElement("button");
         del.type = "button";
         del.className = "thumb-del";
@@ -795,6 +1272,10 @@
     fTitle.value = entry.title || "";
     fPlace.value = entry.place || "";
     fTags.value = Array.isArray(entry.tags) ? entry.tags.join(", ") : "";
+    if (fEntryPrivate) {
+      var ev = entry.visibility != null ? String(entry.visibility).trim().toLowerCase() : "public";
+      fEntryPrivate.checked = ev === "private";
+    }
     fNote.value = entry.note || "";
     editMsg.textContent = "";
     editMsg.className = "msg";
@@ -1190,6 +1671,8 @@
     if (cLat) cLat.value = "";
     if (cLng) cLng.value = "";
     if (cNote) cNote.value = "";
+    if (cEntryPrivate) cEntryPrivate.checked = false;
+    if (cPhotos) cPhotos.value = "";
     createModal.classList.remove("hidden");
     try {
       if (cDate) cDate.focus();
@@ -1205,6 +1688,109 @@
   if (btnNewEntry) {
     btnNewEntry.addEventListener("click", function () {
       openCreateModal();
+    });
+  }
+
+  if (btnBulkPhotos) {
+    btnBulkPhotos.addEventListener("click", function () {
+      try {
+        window.open("/admin-photo-bulk.html", "_blank", "noopener,noreferrer");
+      } catch (e) {
+        window.location.href = "/admin-photo-bulk.html";
+      }
+    });
+  }
+  if (btnBulkClose) {
+    btnBulkClose.addEventListener("click", function () {
+      closeBulkPhotosModal();
+    });
+  }
+  if (bulkPhotosModal) {
+    bulkPhotosModal.addEventListener("click", function (ev) {
+      if (ev.target === bulkPhotosModal) closeBulkPhotosModal();
+    });
+  }
+  document.addEventListener("keydown", function (ev) {
+    if (ev.key === "Escape" && bulkPhotosModal && !bulkPhotosModal.classList.contains("hidden")) {
+      closeBulkPhotosModal();
+    }
+  });
+  if (btnBulkReload) {
+    btnBulkReload.addEventListener("click", function () {
+      bulkState.q = bulkSearch ? String(bulkSearch.value || "").trim() : "";
+      bulkState.vis = bulkVisFilter ? String(bulkVisFilter.value || "all") : "all";
+      bulkState.entryVis = bulkEntryVisFilter ? String(bulkEntryVisFilter.value || "all") : "all";
+      loadBulkPhotos(true);
+    });
+  }
+  if (btnBulkLoadMore) {
+    btnBulkLoadMore.addEventListener("click", function () {
+      if (bulkState.nextOffset == null) return;
+      loadBulkPhotos(false);
+    });
+  }
+  if (bulkSearch) {
+    bulkSearch.addEventListener(
+      "input",
+      (function () {
+        var timer = null;
+        return function () {
+          clearTimeout(timer);
+          timer = setTimeout(function () {
+            bulkState.q = String(bulkSearch.value || "").trim();
+            loadBulkPhotos(true);
+          }, 260);
+        };
+      })()
+    );
+  }
+  if (bulkVisFilter) {
+    bulkVisFilter.addEventListener("change", function () {
+      bulkState.vis = String(bulkVisFilter.value || "all");
+      loadBulkPhotos(true);
+    });
+  }
+  if (bulkEntryVisFilter) {
+    bulkEntryVisFilter.addEventListener("change", function () {
+      bulkState.entryVis = String(bulkEntryVisFilter.value || "all");
+      loadBulkPhotos(true);
+    });
+  }
+  if (btnBulkSelectAll) {
+    btnBulkSelectAll.addEventListener("click", function () {
+      bulkState.items.forEach(function (it) {
+        if (!it || it.photoId == null) return;
+        bulkState.selected.add(String(it.photoId));
+      });
+      updateBulkSelectedText();
+      renderBulkGrid();
+    });
+  }
+  if (btnBulkClearSel) {
+    btnBulkClearSel.addEventListener("click", function () {
+      bulkState.selected = new Set();
+      updateBulkSelectedText();
+      renderBulkGrid();
+    });
+  }
+  if (btnBulkSetPublic) {
+    btnBulkSetPublic.addEventListener("click", function () {
+      bulkSetVisibility("public").catch(function (e) {
+        if (bulkMsg) {
+          bulkMsg.textContent = String(e.message || e);
+          bulkMsg.className = "msg err";
+        }
+      });
+    });
+  }
+  if (btnBulkSetPrivate) {
+    btnBulkSetPrivate.addEventListener("click", function () {
+      bulkSetVisibility("private").catch(function (e) {
+        if (bulkMsg) {
+          bulkMsg.textContent = String(e.message || e);
+          bulkMsg.className = "msg err";
+        }
+      });
     });
   }
   if (btnCreateCancel) {
@@ -1271,6 +1857,23 @@
         }
         if (glab) gps.label = glab;
 
+        var photosText = cPhotos ? String(cPhotos.value || "").trim() : "";
+        if (!photosText) {
+          throw new Error("请填写至少 1 张照片（照片 JSON）");
+        }
+        var photos = [];
+        try {
+          var parsed = JSON.parse(photosText);
+          if (Array.isArray(parsed)) photos = parsed;
+          else if (parsed && typeof parsed === "object") photos = [parsed];
+          else throw new Error("需为 JSON 数组或对象");
+        } catch (e) {
+          throw new Error("照片 JSON 无效：" + String(e && e.message ? e.message : e));
+        }
+        if (!Array.isArray(photos) || !photos.length) {
+          throw new Error("请填写至少 1 张照片（照片 JSON）");
+        }
+
         var created = await api("/api/admin/photo-timeline/entry", {
           method: "POST",
           body: JSON.stringify({
@@ -1280,6 +1883,8 @@
             note: cNote ? cNote.value : "",
             tags: tagsRaw,
             gps: gps,
+            visibility: cEntryPrivate && cEntryPrivate.checked ? "private" : "public",
+            photos: photos,
           }),
         });
         if (createMsg) {
@@ -1358,6 +1963,7 @@
           note: fNote.value,
           tags: tagsRaw,
           gps: gpsPatch,
+          visibility: fEntryPrivate && fEntryPrivate.checked ? "private" : "public",
         }),
       });
       editMsg.textContent = "已保存";
@@ -1396,4 +2002,3 @@
   </script>
 </body>
 </html>
-

@@ -448,13 +448,79 @@ def _dms_to_decimal(dms_tuple, ref: str) -> Optional[float]:
         return None
 
 
+def _rational_to_float(value: Any) -> Optional[float]:
+    try:
+        if value is None:
+            return None
+        if hasattr(value, "numerator") and hasattr(value, "denominator"):
+            denominator = float(value.denominator)
+            if denominator == 0:
+                return None
+            return float(value.numerator) / denominator
+        return float(value)
+    except Exception:
+        return None
+
+
+def _normalize_text(value: Any) -> Optional[str]:
+    if value is None:
+        return None
+    s = str(value).strip()
+    return s or None
+
+
+def _normalize_int(value: Any) -> Optional[int]:
+    try:
+        if value is None:
+            return None
+        return int(round(float(value)))
+    except Exception:
+        return None
+
+
+def _format_exposure_time(seconds: Optional[float]) -> Optional[str]:
+    if seconds is None or seconds <= 0:
+        return None
+    try:
+        if seconds >= 1:
+            value = f"{seconds:.1f}".rstrip("0").rstrip(".")
+            return f"{value}s"
+        reciprocal = round(1 / seconds)
+        if reciprocal > 0:
+            return f"1/{reciprocal}s"
+    except Exception:
+        return None
+    return None
+
+
 def _empty_heic_metadata(filepath: str) -> dict:
     return {
         "file": os.path.basename(filepath),
         "datetime_original": None,
+        "datetime_digitized": None,
+        "datetime_file": None,
         "gps_latitude": None,
         "gps_longitude": None,
         "gps_altitude": None,
+        "camera_make": None,
+        "camera_model": None,
+        "lens_model": None,
+        "device_model": None,
+        "software": None,
+        "aperture_f_number": None,
+        "exposure_time_s": None,
+        "exposure_time_text": None,
+        "iso": None,
+        "focal_length_mm": None,
+        "width_px": None,
+        "height_px": None,
+        "raw_exif": {},
+        "apple_photos": {
+            "embedded_labels_found": False,
+            "people_labels": [],
+            "place_category": None,
+            "note": "LIVP/HEIC 文件通常不包含 Apple Photos 图库里的人物识别与地点分类结果",
+        },
     }
 
 
@@ -471,11 +537,46 @@ def _extract_heic_metadata_from_image(img, filepath: str, logger: logging.Logger
             exif_obj = None
 
     if exif_obj:
+        raw_exif: Dict[str, Any] = {}
+        for key, val in exif_obj.items():
+            tag_name = TAGS.get(key, key)
+            if isinstance(tag_name, str) and tag_name not in ("GPSInfo",):
+                try:
+                    raw_exif[str(tag_name)] = str(val)
+                except Exception:
+                    pass
+        meta["raw_exif"] = raw_exif
+
         for tid in (36867, 36868, 306):  # DateTimeOriginal, DateTimeDigitized, DateTime
             val = exif_obj.get(tid)
             if val:
-                meta["datetime_original"] = str(val)
+                if tid == 36867:
+                    meta["datetime_original"] = str(val)
+                elif tid == 36868:
+                    meta["datetime_digitized"] = str(val)
+                    if not meta["datetime_original"]:
+                        meta["datetime_original"] = str(val)
+                else:
+                    meta["datetime_file"] = str(val)
+                    if not meta["datetime_original"]:
+                        meta["datetime_original"] = str(val)
                 break
+
+        meta["camera_make"] = _normalize_text(exif_obj.get(271))
+        meta["camera_model"] = _normalize_text(exif_obj.get(272))
+        meta["device_model"] = meta["camera_model"]
+        meta["software"] = _normalize_text(exif_obj.get(305))
+        meta["lens_model"] = _normalize_text(exif_obj.get(42036))
+        meta["aperture_f_number"] = _rational_to_float(exif_obj.get(33437))
+        meta["exposure_time_s"] = _rational_to_float(exif_obj.get(33434))
+        meta["exposure_time_text"] = _format_exposure_time(meta["exposure_time_s"])
+        meta["iso"] = _normalize_int(exif_obj.get(34855) or exif_obj.get(34867))
+        meta["focal_length_mm"] = _rational_to_float(exif_obj.get(37386))
+        try:
+            meta["width_px"] = int(getattr(img, "width", 0) or 0) or None
+            meta["height_px"] = int(getattr(img, "height", 0) or 0) or None
+        except Exception:
+            pass
 
         gps_ifd = None
         if hasattr(exif_obj, "get_ifd"):
@@ -508,10 +609,39 @@ def _extract_heic_metadata_from_image(img, filepath: str, logger: logging.Logger
         exif_data = get_exif() if callable(get_exif) else None
         if exif_data:
             decoded = {TAGS.get(k, k): v for k, v in exif_data.items()}
+            meta["raw_exif"] = {
+                str(k): str(v) for k, v in decoded.items() if k != "GPSInfo"
+            }
             for tag in ("DateTimeOriginal", "DateTimeDigitized", "DateTime"):
                 if tag in decoded:
-                    meta["datetime_original"] = str(decoded[tag])
-                    break
+                    if tag == "DateTimeOriginal":
+                        meta["datetime_original"] = str(decoded[tag])
+                    elif tag == "DateTimeDigitized":
+                        meta["datetime_digitized"] = str(decoded[tag])
+                        if not meta["datetime_original"]:
+                            meta["datetime_original"] = str(decoded[tag])
+                    else:
+                        meta["datetime_file"] = str(decoded[tag])
+                        if not meta["datetime_original"]:
+                            meta["datetime_original"] = str(decoded[tag])
+                    if meta["datetime_original"]:
+                        break
+
+            meta["camera_make"] = _normalize_text(decoded.get("Make"))
+            meta["camera_model"] = _normalize_text(decoded.get("Model"))
+            meta["device_model"] = meta["camera_model"]
+            meta["software"] = _normalize_text(decoded.get("Software"))
+            meta["lens_model"] = _normalize_text(decoded.get("LensModel"))
+            meta["aperture_f_number"] = _rational_to_float(decoded.get("FNumber"))
+            meta["exposure_time_s"] = _rational_to_float(decoded.get("ExposureTime"))
+            meta["exposure_time_text"] = _format_exposure_time(meta["exposure_time_s"])
+            meta["iso"] = _normalize_int(decoded.get("ISOSpeedRatings") or decoded.get("PhotographicSensitivity"))
+            meta["focal_length_mm"] = _rational_to_float(decoded.get("FocalLength"))
+            try:
+                meta["width_px"] = int(getattr(img, "width", 0) or 0) or None
+                meta["height_px"] = int(getattr(img, "height", 0) or 0) or None
+            except Exception:
+                pass
 
             gps_info = decoded.get("GPSInfo")
             if gps_info:
@@ -758,6 +888,59 @@ def _web_rel(web_prefix: str, folder_name: str, filename: str) -> str:
     return f"{p}/{folder_name}/{filename}"
 
 
+def _build_photo_metadata_block(meta: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+    if not meta or not isinstance(meta, dict):
+        return None
+    gps_block = None
+    if meta.get("gps_latitude") is not None and meta.get("gps_longitude") is not None:
+        gps_block = {
+            "latitude": meta.get("gps_latitude"),
+            "longitude": meta.get("gps_longitude"),
+            "altitude_m": meta.get("gps_altitude"),
+            "label": "",
+        }
+    out = {
+        "captured_at": meta.get("datetime_original"),
+        "datetime_original": meta.get("datetime_original"),
+        "datetime_digitized": meta.get("datetime_digitized"),
+        "datetime_file": meta.get("datetime_file"),
+        "camera_make": meta.get("camera_make"),
+        "camera_model": meta.get("camera_model"),
+        "lens_model": meta.get("lens_model"),
+        "device_model": meta.get("device_model"),
+        "software": meta.get("software"),
+        "aperture_f_number": meta.get("aperture_f_number"),
+        "exposure_time_s": meta.get("exposure_time_s"),
+        "exposure_time_text": meta.get("exposure_time_text"),
+        "iso": meta.get("iso"),
+        "focal_length_mm": meta.get("focal_length_mm"),
+        "width_px": meta.get("width_px"),
+        "height_px": meta.get("height_px"),
+        "gps": gps_block,
+        "apple_photos": meta.get("apple_photos"),
+        "raw_exif": meta.get("raw_exif"),
+    }
+    has_any = any(
+        value not in (None, "", [], {})
+        for key, value in out.items()
+        if key not in ("gps", "apple_photos", "raw_exif")
+    ) or gps_block is not None or bool(out.get("apple_photos")) or bool(out.get("raw_exif"))
+    return out if has_any else None
+
+
+def _semantic_placeholder() -> Dict[str, Any]:
+    return {
+        "people": [],
+        "place_name": "",
+        "place_category": "",
+        "scene": "",
+        "scene_tags": [],
+        "summary": "",
+        "source": "extractor_pending_review",
+        "notes": "文件可稳定提取 EXIF/拍摄/GPS/设备信息；人物识别、地点分类、场景理解通常需要人工确认或额外模型补充。",
+    }
+
+
 def build_photo_timeline_entry(
     *,
     livp_basename: str,
@@ -794,6 +977,9 @@ def build_photo_timeline_entry(
     photos: List[Dict[str, Any]] = []
     # 确定用于URL路径的文件夹名称
     url_folder_name = output_folder_name if output_folder_name else folder_name
+    meta_by_file = {
+        str(m.get("file")): m for m in heic_meta_list if m and isinstance(m, dict) and m.get("file")
+    }
 
     for idx, (hp, mp) in enumerate(pairs):
         thumb_name, preview_name = _timeline_jpeg_names(hp, len(pairs))
@@ -832,11 +1018,14 @@ def build_photo_timeline_entry(
             thumb_web = src_web
 
         cap = heic_name.rsplit(".", 1)[0] if "." in heic_name else heic_name
+        file_meta = meta_by_file.get(heic_name)
         ph: Dict[str, Any] = {
             "thumb": thumb_web,
             "src": src_web,
             "caption": cap,
             "ratio": "wide",
+            "metadata": _build_photo_metadata_block(file_meta),
+            "semantic": _semantic_placeholder(),
         }
         if mov_web:
             ph["video"] = mov_web

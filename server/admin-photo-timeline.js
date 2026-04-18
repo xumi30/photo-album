@@ -8,7 +8,11 @@ import {
   deleteTimelinePhoto,
   getTimelineEntryById,
   readAllTimelineEntries,
+  readTimelinePhotosPage,
   resolveMissingLocationLabels,
+  suggestTimelinePhotoSemanticFromAI,
+  updateTimelinePhotosVisibilityBulk,
+  updateTimelinePhotoMeta,
   updateTimelineEntryMeta,
 } from "./photo-timeline.js";
 
@@ -78,6 +82,7 @@ export function registerAdminPhotoTimelineRoutes(app, opts) {
       if (body.tags !== undefined) {
         patch.tags = Array.isArray(body.tags) ? body.tags : [];
       }
+      if (body.visibility !== undefined) patch.visibility = body.visibility;
       const entry = updateTimelineEntryMeta({ publicDir, serverDir, id, patch });
       res.json({ ok: true, entry });
     } catch (err) {
@@ -114,6 +119,77 @@ export function registerAdminPhotoTimelineRoutes(app, opts) {
     }
   });
 
+  app.put("/api/admin/photo-timeline/entry/:entryId/photo/:photoId", function (req, res) {
+    if (!assertAdminBearerAuth(req, res)) return;
+    const entryId = String(req.params.entryId || "");
+    const photoId = req.params.photoId;
+    const body = req.body && typeof req.body === "object" ? req.body : {};
+    try {
+      const patch = {};
+      if (body.visibility !== undefined) patch.visibility = body.visibility;
+      if (body.caption !== undefined) patch.caption = body.caption;
+      if (body.semantic !== undefined && typeof body.semantic === "object") patch.semantic = body.semantic;
+      const entry = updateTimelinePhotoMeta({ publicDir, serverDir, entryId, photoId, patch });
+      res.json({ ok: true, entry });
+    } catch (err) {
+      const msg = String((err && err.message) || err);
+      const code = msg.indexOf("不存在") >= 0 || msg.indexOf("not found") >= 0 ? 404 : 400;
+      res.status(code).json({ ok: false, error: msg });
+    }
+  });
+
+  app.post("/api/admin/photo-timeline/entry/:entryId/photo/:photoId/ai-suggest", async function (req, res) {
+    if (!assertAdminBearerAuth(req, res)) return;
+    const entryId = String(req.params.entryId || "");
+    const photoId = req.params.photoId;
+    const body = req.body && typeof req.body === "object" ? req.body : {};
+    try {
+      const suggestion = await suggestTimelinePhotoSemanticFromAI({
+        publicDir,
+        serverDir,
+        entryId,
+        photoId,
+        prompt: body.prompt,
+      });
+      res.json({ ok: true, suggestion });
+    } catch (err) {
+      const msg = String((err && err.message) || err);
+      const code = msg.indexOf("未配置 OPENAI_API_KEY") >= 0 ? 503 : 400;
+      res.status(code).json({ ok: false, error: msg });
+    }
+  });
+
+  app.get("/api/admin/photo-timeline/photos", function (req, res) {
+    if (!assertAdminBearerAuth(req, res)) return;
+    try {
+      const page = readTimelinePhotosPage({
+        serverDir,
+        offset: req.query.offset,
+        limit: req.query.limit,
+        query: req.query.q,
+        visibility: req.query.vis,
+        entryVisibility: req.query.entryVis,
+      });
+      res.json({ ok: true, ...page });
+    } catch (err) {
+      res.status(500).json({ ok: false, error: String(err && err.message) });
+    }
+  });
+
+  app.post("/api/admin/photo-timeline/photos/batch-visibility", function (req, res) {
+    if (!assertAdminBearerAuth(req, res)) return;
+    const body = req.body && typeof req.body === "object" ? req.body : {};
+    try {
+      const photoIds = Array.isArray(body.photoIds) ? body.photoIds : [];
+      const visibility = body.visibility;
+      const out = updateTimelinePhotosVisibilityBulk({ publicDir, serverDir, photoIds, visibility });
+      res.json({ ok: true, ...out });
+    } catch (err) {
+      const msg = String((err && err.message) || err);
+      res.status(400).json({ ok: false, error: msg });
+    }
+  });
+
   app.post("/api/admin/photo-timeline/resolve-missing-locations", async function (req, res) {
     if (!assertAdminBearerAuth(req, res)) return;
     try {
@@ -132,4 +208,3 @@ export function registerAdminPhotoTimelineRoutes(app, opts) {
     }
   });
 }
-

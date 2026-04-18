@@ -40,6 +40,12 @@ npm run start
 
 服务端会把该目录挂载到 `GET /assets/live/...`，并在同步时从该目录递归扫描 `photo-timeline-entry.json`。
 
+### 可选：访客登录（用于“需登录可见”的照片）
+
+在 `server/.env` 配置：
+
+- `PHOTO_TIMELINE_USER_SECRET`: 访客登录口令（用于查看照片可见性为 `private` 的媒体）
+
 ### 开发（可选）
 
 两个终端：
@@ -53,4 +59,3 @@ npm run dev:client
 ```
 
 Vite 会把 `/api` 代理到 `server/.env` 里的 `PORT`。
-

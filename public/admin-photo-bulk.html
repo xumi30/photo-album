@@ -1,0 +1,1121 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>批量照片 · 后台</title>
+    <style>
+      :root {
+        --bg: #0b0d12;
+        --panel: #12151c;
+        --panel-2: #151a26;
+        --border: rgba(255, 255, 255, 0.12);
+        --text: #e8eaef;
+        --muted: #9aa3b5;
+        --accent: #6b8cff;
+        --ok: #35d07f;
+        --err: #f07178;
+      }
+      * { box-sizing: border-box; }
+      body {
+        margin: 0;
+        font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
+        background: var(--bg);
+        color: var(--text);
+      }
+      a { color: var(--accent); text-decoration: none; }
+      a:hover { text-decoration: underline; }
+
+      .wrap { max-width: 1600px; margin: 0 auto; padding: 16px 16px 48px; }
+      h1 { font-size: 1.2rem; margin: 8px 0 6px; }
+      .sub { margin: 0 0 14px; color: var(--muted); font-size: 0.88rem; line-height: 1.5; }
+
+      .card {
+        border: 1px solid var(--border);
+        background: var(--panel);
+        border-radius: 12px;
+        padding: 14px 14px;
+      }
+      .hidden { display: none !important; }
+      label { display: block; margin: 0 0 6px; color: var(--muted); font-size: 0.88rem; }
+      input[type="password"], input[type="search"], select {
+        width: 100%;
+        border-radius: 10px;
+        border: 1px solid var(--border);
+        background: #0a0c12;
+        color: var(--text);
+        padding: 10px 12px;
+        font-size: 0.95rem;
+        outline: none;
+      }
+      input[type="password"]:focus, input[type="search"]:focus, select:focus {
+        border-color: rgba(107, 140, 255, 0.85);
+        box-shadow: 0 0 0 2px rgba(107, 140, 255, 0.18);
+      }
+      button {
+        border: 1px solid rgba(255, 255, 255, 0.14);
+        background: rgba(107, 140, 255, 0.16);
+        color: var(--text);
+        border-radius: 10px;
+        padding: 10px 12px;
+        font-weight: 600;
+        cursor: pointer;
+      }
+      button:hover { background: rgba(107, 140, 255, 0.22); }
+      button.secondary { background: #2e3448; color: var(--text); }
+      button.danger { background: rgba(240, 113, 120, 0.18); color: #ffd7da; border: 1px solid rgba(240, 113, 120, 0.45); }
+      button.danger:hover { background: rgba(240, 113, 120, 0.28); }
+      button:disabled { opacity: 0.45; cursor: not-allowed; }
+
+      .toolbar {
+        display: flex;
+        gap: 10px;
+        align-items: center;
+        flex-wrap: wrap;
+        margin: 12px 0;
+      }
+      .toolbar__spacer { flex: 1; min-width: 8px; }
+      .toolbar input[type="search"] { flex: 1 1 360px; max-width: 720px; }
+      .toolbar select { width: auto; min-width: 160px; }
+      .msg { font-size: 0.88rem; min-height: 1.4em; margin: 10px 0 0; }
+      .msg.err { color: var(--err); }
+      .msg.ok { color: var(--ok); }
+      .layout {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) 360px;
+        gap: 14px;
+        align-items: start;
+      }
+      @media (max-width: 1160px) {
+        .layout { grid-template-columns: 1fr; }
+      }
+
+      .bulk-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
+        gap: 10px;
+        margin-top: 12px;
+      }
+      .bulk-item {
+        position: relative;
+        border-radius: 12px;
+        overflow: hidden;
+        border: 1px solid var(--border);
+        background: #0a0c12;
+        cursor: pointer;
+        aspect-ratio: 1 / 1;
+        user-select: none;
+      }
+      .bulk-item img {
+        width: 100%;
+        height: 100%;
+        object-fit: cover;
+        display: block;
+      }
+      .bulk-item__fallback {
+        width: 100%;
+        height: 100%;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        color: var(--muted);
+        font-size: 0.82rem;
+        padding: 10px;
+        text-align: center;
+        line-height: 1.35;
+      }
+      .bulk-item__meta {
+        position: absolute;
+        left: 10px;
+        right: 10px;
+        bottom: 10px;
+        display: flex;
+        gap: 8px;
+        align-items: center;
+        justify-content: space-between;
+        pointer-events: none;
+      }
+      .bulk-pill {
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        padding: 2px 8px;
+        border-radius: 999px;
+        border: 1px solid rgba(255, 255, 255, 0.18);
+        background: rgba(10, 12, 18, 0.45);
+        color: rgba(255, 255, 255, 0.88);
+        font-size: 0.75rem;
+        backdrop-filter: blur(6px);
+        max-width: 100%;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+      .bulk-pill--private {
+        border-color: rgba(240, 113, 120, 0.45);
+        background: rgba(240, 113, 120, 0.12);
+        color: #ffd7da;
+      }
+      .bulk-check {
+        position: absolute;
+        top: 10px;
+        right: 10px;
+        width: 24px;
+        height: 24px;
+        border-radius: 999px;
+        border: 1px solid rgba(255, 255, 255, 0.26);
+        background: rgba(10, 12, 18, 0.35);
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        color: rgba(255, 255, 255, 0.88);
+        font-size: 15px;
+        line-height: 1;
+        backdrop-filter: blur(6px);
+      }
+      .bulk-item.is-selected {
+        border-color: rgba(107, 140, 255, 0.9);
+        box-shadow: 0 0 0 2px rgba(107, 140, 255, 0.15);
+      }
+      .bulk-item.is-selected .bulk-check {
+        background: rgba(107, 140, 255, 0.28);
+        border-color: rgba(107, 140, 255, 0.75);
+      }
+
+      .bulk-bar {
+        position: sticky;
+        bottom: 0;
+        margin-top: 14px;
+        padding: 12px 12px;
+        border-radius: 12px;
+        border: 1px solid var(--border);
+        background: rgba(18, 21, 28, 0.92);
+        backdrop-filter: blur(10px);
+        display: flex;
+        gap: 10px;
+        align-items: center;
+        flex-wrap: wrap;
+      }
+      .bulk-bar__spacer { flex: 1; }
+      .k { color: var(--muted); font-size: 0.88rem; }
+      .panel-sticky {
+        position: sticky;
+        top: 16px;
+      }
+      .detail-cover {
+        width: 100%;
+        aspect-ratio: 1 / 1;
+        border-radius: 12px;
+        overflow: hidden;
+        border: 1px solid var(--border);
+        background: #0a0c12;
+        margin-bottom: 12px;
+      }
+      .detail-cover img, .detail-cover video {
+        width: 100%;
+        height: 100%;
+        display: block;
+        object-fit: cover;
+      }
+      .detail-empty {
+        min-height: 180px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        color: var(--muted);
+        text-align: center;
+        line-height: 1.5;
+        padding: 18px;
+      }
+      .detail-form {
+        display: grid;
+        gap: 10px;
+      }
+      .detail-form textarea {
+        width: 100%;
+        min-height: 84px;
+        resize: vertical;
+        border-radius: 10px;
+        border: 1px solid var(--border);
+        background: #0a0c12;
+        color: var(--text);
+        padding: 10px 12px;
+        font-size: 0.95rem;
+        outline: none;
+      }
+      .detail-form textarea:focus {
+        border-color: rgba(107, 140, 255, 0.85);
+        box-shadow: 0 0 0 2px rgba(107, 140, 255, 0.18);
+      }
+      .detail-meta {
+        display: grid;
+        gap: 8px;
+        margin-top: 12px;
+        padding-top: 12px;
+        border-top: 1px solid var(--border);
+      }
+      .meta-row {
+        font-size: 0.87rem;
+        line-height: 1.45;
+        color: var(--muted);
+      }
+      .meta-row strong {
+        color: var(--text);
+        font-weight: 600;
+        margin-right: 6px;
+      }
+      .detail-actions {
+        display: flex;
+        gap: 10px;
+        flex-wrap: wrap;
+      }
+      .hint {
+        font-size: 0.84rem;
+        color: var(--muted);
+        line-height: 1.5;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="wrap">
+      <h1>批量照片 · 后台</h1>
+      <p class="sub">
+        多选：点击选择；Shift 点击可连选区间。<br />
+        返回管理首页：
+        <a href="/admin-photo-timeline.html">/admin-photo-timeline.html</a>
+      </p>
+
+      <div id="loginPanel" class="card">
+        <label for="token">访问令牌（ADMIN_SECRET）</label>
+        <input type="password" id="token" autocomplete="current-password" placeholder="粘贴密钥后进入" />
+        <div class="toolbar" style="margin-top: 12px;">
+          <button type="button" id="btnLogin">进入</button>
+        </div>
+        <p id="loginMsg" class="msg err"></p>
+      </div>
+
+      <div id="mainPanel" class="hidden">
+        <div class="layout">
+          <div class="card">
+            <div class="toolbar">
+              <input type="search" id="bulkSearch" placeholder="搜索：标题 / 人物 / 地点 / 场景 / 文件名 / 机型…" aria-label="搜索照片" />
+              <select id="bulkVisFilter" aria-label="按照片可见性筛选">
+                <option value="all">照片：全部</option>
+                <option value="public">照片：公开</option>
+                <option value="private">照片：需登录</option>
+              </select>
+              <select id="bulkEntryVisFilter" aria-label="按条目可见性筛选">
+                <option value="all">条目：全部</option>
+                <option value="public">条目：公开</option>
+                <option value="private">条目：需登录</option>
+              </select>
+              <button type="button" id="btnBulkReload" class="secondary">重新加载</button>
+              <span class="toolbar__spacer"></span>
+              <button type="button" id="btnLogout" class="secondary">退出</button>
+            </div>
+            <p id="bulkMsg" class="msg"></p>
+            <div id="bulkPhotosGrid" class="bulk-grid" aria-label="照片网格"></div>
+            <div class="bulk-bar" aria-label="批量操作栏">
+              <span id="bulkSelectedText" class="k">已选 0</span>
+              <button type="button" id="btnBulkSelectAll" class="secondary">全选（已加载）</button>
+              <button type="button" id="btnBulkClearSel" class="secondary">清空选择</button>
+              <span class="bulk-bar__spacer"></span>
+              <button type="button" id="btnBulkLoadMore" class="secondary">加载更多</button>
+              <button type="button" id="btnBulkAiSelected" class="secondary">AI 补全已选</button>
+              <button type="button" id="btnBulkSetPublic">设为公开</button>
+              <button type="button" id="btnBulkSetPrivate" class="danger">设为需登录</button>
+            </div>
+          </div>
+
+          <div class="card panel-sticky">
+            <h2 style="margin: 0 0 10px; font-size: 1rem;">照片详情 / 标注</h2>
+            <div id="detailCover" class="detail-cover">
+              <div class="detail-empty">点一张照片后，在这里编辑人物、地点、场景和说明。</div>
+            </div>
+            <p id="detailStatus" class="msg"></p>
+            <div id="detailForm" class="detail-form hidden">
+              <label for="detailCaption">标题 / Caption</label>
+              <input type="search" id="detailCaption" placeholder="例如：杭州西湖日落" />
+
+              <label for="detailVisibility">照片可见性</label>
+              <select id="detailVisibility">
+                <option value="public">公开</option>
+                <option value="private">需登录</option>
+              </select>
+
+              <label for="detailPeople">人物（逗号分隔）</label>
+              <input type="search" id="detailPeople" placeholder="例如：Lei, Mom, Coco" />
+
+              <label for="detailPlaceName">地点名称</label>
+              <input type="search" id="detailPlaceName" placeholder="例如：杭州西湖断桥" />
+
+              <label for="detailPlaceCategory">地点分类</label>
+              <input type="search" id="detailPlaceCategory" placeholder="例如：湖泊 / 公园 / 餐厅 / 家里" />
+
+              <label for="detailScene">场景主类</label>
+              <input type="search" id="detailScene" placeholder="例如：雪景 / 海边 / 城市夜景 / 家庭聚会" />
+
+              <label for="detailSceneTags">场景标签（逗号分隔）</label>
+              <input type="search" id="detailSceneTags" placeholder="例如：日落, 湖面, 游船, 冬天" />
+
+              <label for="detailSummary">看图摘要</label>
+              <textarea id="detailSummary" placeholder="一句话描述这张照片里发生了什么"></textarea>
+
+              <label for="detailSource">语义来源</label>
+              <input type="search" id="detailSource" placeholder="例如：manual / llm / photos-import" />
+
+              <label for="detailNotes">备注</label>
+              <textarea id="detailNotes" placeholder="补充信息、待确认问题、命名约定等"></textarea>
+
+              <div class="detail-actions">
+                <button type="button" id="btnAiSuggestDetail" class="secondary">AI 生成建议</button>
+                <button type="button" id="btnSaveDetail">保存当前照片</button>
+                <button type="button" id="btnOpenEntry" class="secondary">打开所属条目</button>
+              </div>
+
+              <div class="detail-meta" id="detailMeta"></div>
+              <p class="hint">说明：拍摄时间 / 相机参数 / GPS 这类硬信息来自文件元数据；人物、地点分类、场景描述这类语义信息通常需要人工确认或后续模型补充。</p>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <script>
+      (function () {
+        const AUTH_STORAGE_KEY = "admin_photo_timeline_auth_v1";
+        const AUTH_TTL_MS = 10 * 60 * 1000;
+
+        const loginPanel = document.getElementById("loginPanel");
+        const mainPanel = document.getElementById("mainPanel");
+        const tokenInput = document.getElementById("token");
+        const loginMsg = document.getElementById("loginMsg");
+        const btnLogin = document.getElementById("btnLogin");
+        const btnLogout = document.getElementById("btnLogout");
+
+        const bulkSearch = document.getElementById("bulkSearch");
+        const bulkVisFilter = document.getElementById("bulkVisFilter");
+        const bulkEntryVisFilter = document.getElementById("bulkEntryVisFilter");
+        const btnBulkReload = document.getElementById("btnBulkReload");
+        const btnBulkLoadMore = document.getElementById("btnBulkLoadMore");
+        const bulkMsg = document.getElementById("bulkMsg");
+        const bulkPhotosGrid = document.getElementById("bulkPhotosGrid");
+        const bulkSelectedText = document.getElementById("bulkSelectedText");
+        const btnBulkSelectAll = document.getElementById("btnBulkSelectAll");
+        const btnBulkClearSel = document.getElementById("btnBulkClearSel");
+        const btnBulkSetPublic = document.getElementById("btnBulkSetPublic");
+        const btnBulkSetPrivate = document.getElementById("btnBulkSetPrivate");
+        const btnBulkAiSelected = document.getElementById("btnBulkAiSelected");
+        const detailCover = document.getElementById("detailCover");
+        const detailStatus = document.getElementById("detailStatus");
+        const detailForm = document.getElementById("detailForm");
+        const detailCaption = document.getElementById("detailCaption");
+        const detailVisibility = document.getElementById("detailVisibility");
+        const detailPeople = document.getElementById("detailPeople");
+        const detailPlaceName = document.getElementById("detailPlaceName");
+        const detailPlaceCategory = document.getElementById("detailPlaceCategory");
+        const detailScene = document.getElementById("detailScene");
+        const detailSceneTags = document.getElementById("detailSceneTags");
+        const detailSummary = document.getElementById("detailSummary");
+        const detailSource = document.getElementById("detailSource");
+        const detailNotes = document.getElementById("detailNotes");
+        const detailMeta = document.getElementById("detailMeta");
+        const btnAiSuggestDetail = document.getElementById("btnAiSuggestDetail");
+        const btnSaveDetail = document.getElementById("btnSaveDetail");
+        const btnOpenEntry = document.getElementById("btnOpenEntry");
+
+        const safeLocalStorage = {
+          get(key) {
+            try { return window.localStorage.getItem(key); } catch (e) { return null; }
+          },
+          set(key, value) {
+            try { return window.localStorage.setItem(key, value); } catch (e) {}
+          },
+          remove(key) {
+            try { return window.localStorage.removeItem(key); } catch (e) {}
+          },
+        };
+
+        function readAuthRecord() {
+          const raw = safeLocalStorage.get(AUTH_STORAGE_KEY);
+          if (!raw) return null;
+          try {
+            const obj = JSON.parse(raw);
+            if (!obj || typeof obj !== "object") return null;
+            if (typeof obj.token !== "string" || !obj.token.trim()) return null;
+            const exp = Number(obj.exp);
+            if (!Number.isFinite(exp)) return null;
+            return { token: obj.token.trim(), exp };
+          } catch (e) {
+            return null;
+          }
+        }
+
+        function getToken() {
+          const rec = readAuthRecord();
+          if (!rec) return "";
+          if (Date.now() > rec.exp) {
+            safeLocalStorage.remove(AUTH_STORAGE_KEY);
+            return "";
+          }
+          return rec.token;
+        }
+
+        function setToken(t) {
+          const s = t != null ? String(t).trim() : "";
+          if (!s) {
+            safeLocalStorage.remove(AUTH_STORAGE_KEY);
+            return;
+          }
+          safeLocalStorage.set(AUTH_STORAGE_KEY, JSON.stringify({ token: s, exp: Date.now() + AUTH_TTL_MS }));
+        }
+
+        function authHeaders() {
+          const t = getToken();
+          const headers = { "Content-Type": "application/json" };
+          if (t) headers.Authorization = "Bearer " + t;
+          return headers;
+        }
+
+        async function api(path, opt) {
+          const base = opt && typeof opt === "object" ? opt : {};
+          const headers = Object.assign({}, authHeaders(), base.headers || {});
+          const next = Object.assign({}, base, { headers, credentials: "same-origin" });
+          const url = new URL(path, window.location.origin).toString();
+          const r = await fetch(url, next);
+          const data = await r.json().catch(function () { return {}; });
+          if (!r.ok) throw new Error(data.error || r.statusText || String(r.status));
+          return data;
+        }
+
+        async function tryResumeWithCookieSession() {
+          const r = await fetch(new URL("/api/admin/photo-timeline/photos?offset=0&limit=1", window.location.origin), {
+            method: "GET",
+            credentials: "same-origin",
+            headers: { "Content-Type": "application/json" },
+          });
+          return r.ok;
+        }
+
+        function showLogin() {
+          loginPanel.classList.remove("hidden");
+          mainPanel.classList.add("hidden");
+        }
+        function showMain() {
+          loginPanel.classList.add("hidden");
+          mainPanel.classList.remove("hidden");
+        }
+
+        function confirmTwice(title, detail) {
+          var d = detail ? String(detail) : "";
+          var a = window.confirm(title + (d ? "\n\n" + d : ""));
+          if (!a) return false;
+          var b = window.confirm("再次确认：" + title + (d ? "\n\n" + d : ""));
+          return !!b;
+        }
+
+        function mediaUrl(rel) {
+          if (!rel || typeof rel !== "string") return "";
+          var s = rel.trim();
+          if (/^https?:\/\//i.test(s)) return s;
+          if (s.startsWith("/")) return s;
+          return "/" + s.replace(/^\/+/, "");
+        }
+
+        const state = {
+          items: [],
+          total: 0,
+          nextOffset: 0,
+          loading: false,
+          selected: new Set(),
+          lastClickIndex: -1,
+          activeId: "",
+          q: "",
+          vis: "all",
+          entryVis: "all",
+          aiBusy: false,
+        };
+
+        function parseCsv(value) {
+          return String(value || "")
+            .split(/[,\n，]/)
+            .map(function (part) { return String(part || "").trim(); })
+            .filter(Boolean);
+        }
+
+        function formatNumber(value, digits) {
+          var num = Number(value);
+          if (!Number.isFinite(num)) return "";
+          return typeof digits === "number" ? num.toFixed(digits) : String(num);
+        }
+
+        function escapeHtml(value) {
+          return String(value == null ? "" : value)
+            .replace(/&/g, "&amp;")
+            .replace(/</g, "&lt;")
+            .replace(/>/g, "&gt;")
+            .replace(/\"/g, "&quot;");
+        }
+
+        function activeItem() {
+          if (!state.activeId) return null;
+          for (var i = 0; i < state.items.length; i++) {
+            var it = state.items[i];
+            if (it && String(it.photoId) === String(state.activeId)) return it;
+          }
+          return null;
+        }
+
+        function semanticOf(item) {
+          return item && item.semantic && typeof item.semantic === "object" ? item.semantic : {};
+        }
+
+        function metadataOf(item) {
+          return item && item.metadata && typeof item.metadata === "object" ? item.metadata : {};
+        }
+
+        function renderDetail() {
+          var item = activeItem();
+          if (!item) {
+            detailForm.classList.add("hidden");
+            detailStatus.textContent = "";
+            detailStatus.className = "msg";
+            detailCover.innerHTML = '<div class="detail-empty">点一张照片后，在这里编辑人物、地点、场景和说明。</div>';
+            detailMeta.innerHTML = "";
+            return;
+          }
+
+          var coverUrl = mediaUrl((item.src && String(item.src)) || (item.thumb && String(item.thumb)) || "");
+          if (coverUrl) {
+            detailCover.innerHTML = '<img alt="' + escapeHtml(item.caption || item.title || "photo") + '" src="' + escapeHtml(coverUrl) + '" loading="lazy" />';
+          } else {
+            detailCover.innerHTML = '<div class="detail-empty">当前照片没有可预览资源</div>';
+          }
+
+          var semantic = semanticOf(item);
+          var metadata = metadataOf(item);
+          detailForm.classList.remove("hidden");
+          detailCaption.value = item.caption || "";
+          detailVisibility.value = String(item.visibility || "public").toLowerCase() === "private" ? "private" : "public";
+          detailPeople.value = Array.isArray(semantic.people) ? semantic.people.join(", ") : "";
+          detailPlaceName.value = semantic.place_name || "";
+          detailPlaceCategory.value = semantic.place_category || "";
+          detailScene.value = semantic.scene || "";
+          detailSceneTags.value = Array.isArray(semantic.scene_tags) ? semantic.scene_tags.join(", ") : "";
+          detailSummary.value = semantic.summary || "";
+          detailSource.value = semantic.source || "";
+          detailNotes.value = semantic.notes || "";
+
+          var gps = metadata.gps && typeof metadata.gps === "object" ? metadata.gps : {};
+          var rows = [];
+          rows.push('<div class="meta-row"><strong>条目</strong>' + escapeHtml(item.entryId || "") + '</div>');
+          rows.push('<div class="meta-row"><strong>日期</strong>' + escapeHtml(item.calendarDate || item.date || "") + '</div>');
+          rows.push('<div class="meta-row"><strong>拍摄时间</strong>' + escapeHtml(metadata.captured_at || metadata.datetime_original || "") + '</div>');
+          rows.push('<div class="meta-row"><strong>设备</strong>' + escapeHtml([metadata.camera_make, metadata.camera_model, metadata.device_model].filter(Boolean).join(" / ")) + '</div>');
+          rows.push('<div class="meta-row"><strong>镜头</strong>' + escapeHtml(metadata.lens_model || "") + '</div>');
+          rows.push('<div class="meta-row"><strong>参数</strong>' + escapeHtml([
+            metadata.aperture_f_number != null ? ("f/" + formatNumber(metadata.aperture_f_number, 1)) : "",
+            metadata.exposure_time_text || "",
+            metadata.iso != null ? ("ISO " + metadata.iso) : "",
+            metadata.focal_length_mm != null ? (formatNumber(metadata.focal_length_mm, 1) + "mm") : ""
+          ].filter(Boolean).join(" · ")) + '</div>');
+          rows.push('<div class="meta-row"><strong>尺寸</strong>' + escapeHtml([
+            metadata.width_px != null ? metadata.width_px : "",
+            metadata.height_px != null ? metadata.height_px : ""
+          ].filter(Boolean).join(" × ")) + '</div>');
+          rows.push('<div class="meta-row"><strong>GPS</strong>' + escapeHtml(
+            gps.latitude != null && gps.longitude != null
+              ? formatNumber(gps.latitude, 6) + ", " + formatNumber(gps.longitude, 6) + (gps.label ? " · " + gps.label : "")
+              : ""
+          ) + '</div>');
+          rows.push('<div class="meta-row"><strong>Apple Photos</strong>' + escapeHtml(
+            metadata.apple_photos && metadata.apple_photos.note ? metadata.apple_photos.note : "未发现文件内可直接读取的人物/地点分类标签"
+          ) + '</div>');
+          detailMeta.innerHTML = rows.join("");
+          if (btnAiSuggestDetail) btnAiSuggestDetail.disabled = !!state.aiBusy;
+          if (btnSaveDetail) btnSaveDetail.disabled = !!state.aiBusy;
+        }
+
+        function applyEntryPhotoToItem(entry, photoId) {
+          if (!entry || !Array.isArray(entry.photos)) return;
+          var nextPhoto = null;
+          for (var i = 0; i < entry.photos.length; i++) {
+            var p = entry.photos[i];
+            if (p && String(p.id) === String(photoId)) {
+              nextPhoto = p;
+              break;
+            }
+          }
+          if (!nextPhoto) return;
+          state.items.forEach(function (it) {
+            if (!it || String(it.photoId) !== String(photoId)) return;
+            it.caption = nextPhoto.caption || "";
+            it.visibility = nextPhoto.visibility || "public";
+            it.metadata = nextPhoto.metadata || null;
+            it.semantic = nextPhoto.semantic || null;
+            it.thumb = nextPhoto.thumb || it.thumb;
+            it.src = nextPhoto.src || it.src;
+            it.video = nextPhoto.video || it.video;
+          });
+        }
+
+        function updateSelectedText() {
+          if (!bulkSelectedText) return;
+          bulkSelectedText.textContent = "已选 " + state.selected.size + (state.activeId ? " · 当前编辑 #" + state.activeId : "");
+        }
+
+        function renderGrid() {
+          bulkPhotosGrid.innerHTML = "";
+          state.items.forEach(function (it, idx) {
+            var pid = it && it.photoId != null ? Number(it.photoId) : NaN;
+            if (!Number.isFinite(pid) || pid <= 0) return;
+            var cell = document.createElement("div");
+            cell.className = "bulk-item";
+            if (state.selected.has(String(pid))) cell.classList.add("is-selected");
+            if (String(state.activeId) === String(pid)) {
+              cell.style.outline = "2px solid rgba(255,255,255,0.9)";
+              cell.style.outlineOffset = "-2px";
+            }
+
+            var imgSrc = mediaUrl((it.thumb && String(it.thumb)) || (it.src && String(it.src)) || "");
+            if (imgSrc) {
+              var im = document.createElement("img");
+              im.loading = "lazy";
+              im.alt = it.caption || it.title || "photo";
+              im.src = imgSrc;
+              im.onerror = function () {
+                var fb = document.createElement("div");
+                fb.className = "bulk-item__fallback";
+                fb.textContent = "加载失败";
+                im.replaceWith(fb);
+              };
+              cell.appendChild(im);
+            } else {
+              var fb0 = document.createElement("div");
+              fb0.className = "bulk-item__fallback";
+              fb0.textContent = "无缩略图";
+              cell.appendChild(fb0);
+            }
+
+            var check = document.createElement("div");
+            check.className = "bulk-check";
+            check.textContent = state.selected.has(String(pid)) ? "✓" : "";
+            cell.appendChild(check);
+
+            var meta = document.createElement("div");
+            meta.className = "bulk-item__meta";
+            var left = document.createElement("span");
+            left.className = "bulk-pill";
+            left.textContent = (it.calendarDate || it.date || "").slice(0, 10) || (it.entryId || "");
+            meta.appendChild(left);
+            var right = document.createElement("span");
+            var vis = it.visibility != null ? String(it.visibility).toLowerCase() : "public";
+            var evis = it.entryVisibility != null ? String(it.entryVisibility).toLowerCase() : "public";
+            var needLogin = (vis === "private") || (evis === "private");
+            right.className = "bulk-pill" + (needLogin ? " bulk-pill--private" : "");
+            right.textContent = needLogin ? "需登录" : "公开";
+            meta.appendChild(right);
+            cell.appendChild(meta);
+
+            cell.addEventListener("click", function (ev) {
+              ev.preventDefault();
+              var id = String(pid);
+              if (ev.shiftKey && state.lastClickIndex >= 0) {
+                var a = Math.min(state.lastClickIndex, idx);
+                var b = Math.max(state.lastClickIndex, idx);
+                for (var i = a; i <= b; i++) {
+                  var p2 = state.items[i];
+                  var pid2 = p2 && p2.photoId != null ? String(p2.photoId) : "";
+                  if (pid2) state.selected.add(pid2);
+                }
+              } else {
+                if (state.selected.has(id)) state.selected.delete(id);
+                else state.selected.add(id);
+                state.lastClickIndex = idx;
+              }
+              state.activeId = id;
+              updateSelectedText();
+              renderGrid();
+              renderDetail();
+            });
+
+            bulkPhotosGrid.appendChild(cell);
+          });
+          updateSelectedText();
+        }
+
+        async function loadPage(reset) {
+          if (state.loading) return;
+          state.loading = true;
+          bulkMsg.textContent = reset ? "加载中…" : "加载更多…";
+          bulkMsg.className = "msg";
+          try {
+            if (reset) {
+              state.items = [];
+              state.selected = new Set();
+              state.lastClickIndex = -1;
+              state.activeId = "";
+            }
+            var offset = state.items.length;
+            var url =
+              "/api/admin/photo-timeline/photos?offset=" +
+              encodeURIComponent(String(offset)) +
+              "&limit=" +
+              encodeURIComponent(String(600)) +
+              "&q=" +
+              encodeURIComponent(String(state.q || "")) +
+              "&vis=" +
+              encodeURIComponent(String(state.vis || "all")) +
+              "&entryVis=" +
+              encodeURIComponent(String(state.entryVis || "all"));
+            var data = await api(url, { method: "GET" });
+            var items = data && Array.isArray(data.items) ? data.items : [];
+            state.total = typeof data.total === "number" ? data.total : state.items.length + items.length;
+            state.items = state.items.concat(items);
+            state.nextOffset = data.nextOffset != null ? Number(data.nextOffset) : null;
+            if (!state.activeId && state.items.length) state.activeId = String(state.items[0].photoId || "");
+            btnBulkLoadMore.disabled = state.nextOffset == null;
+            renderGrid();
+            renderDetail();
+            bulkMsg.textContent = "已加载 " + state.items.length + " / " + state.total;
+            bulkMsg.className = "msg ok";
+          } catch (e) {
+            bulkMsg.textContent = String(e.message || e);
+            bulkMsg.className = "msg err";
+          } finally {
+            state.loading = false;
+          }
+        }
+
+        async function bulkSetVisibility(nextVis) {
+          var vis = String(nextVis || "").trim().toLowerCase() === "private" ? "private" : "public";
+          var ids = Array.from(state.selected.values())
+            .map(function (x) { return Math.floor(Number(x)); })
+            .filter(function (n) { return Number.isFinite(n) && n > 0; });
+          if (!ids.length) return;
+          if (!confirmTwice("确定批量修改可见性？", "将修改 " + ids.length + " 张照片为：" + (vis === "private" ? "需登录" : "公开"))) {
+            return;
+          }
+          bulkMsg.textContent = "提交中…";
+          bulkMsg.className = "msg";
+          await api("/api/admin/photo-timeline/photos/batch-visibility", {
+            method: "POST",
+            body: JSON.stringify({ photoIds: ids, visibility: vis }),
+          });
+          // 乐观更新
+          state.items.forEach(function (it) {
+            if (!it || it.photoId == null) return;
+            if (state.selected.has(String(it.photoId))) it.visibility = vis;
+          });
+          state.selected = new Set();
+          renderGrid();
+          renderDetail();
+          bulkMsg.textContent = "已更新可见性";
+          bulkMsg.className = "msg ok";
+        }
+
+        async function saveCurrentPhoto() {
+          var item = activeItem();
+          if (!item) throw new Error("请先选择一张照片");
+          var payload = {
+            caption: String(detailCaption.value || "").trim(),
+            visibility: String(detailVisibility.value || "public").trim().toLowerCase() === "private" ? "private" : "public",
+            semantic: {
+              people: parseCsv(detailPeople.value),
+              place_name: String(detailPlaceName.value || "").trim(),
+              place_category: String(detailPlaceCategory.value || "").trim(),
+              scene: String(detailScene.value || "").trim(),
+              scene_tags: parseCsv(detailSceneTags.value),
+              summary: String(detailSummary.value || "").trim(),
+              source: String(detailSource.value || "").trim(),
+              notes: String(detailNotes.value || "").trim(),
+            },
+          };
+          detailStatus.textContent = "保存中…";
+          detailStatus.className = "msg";
+          var data = await api(
+            "/api/admin/photo-timeline/entry/" +
+              encodeURIComponent(String(item.entryId || "")) +
+              "/photo/" +
+              encodeURIComponent(String(item.photoId || "")),
+            {
+              method: "PUT",
+              body: JSON.stringify(payload),
+            }
+          );
+          applyEntryPhotoToItem(data && data.entry, item.photoId);
+          renderGrid();
+          renderDetail();
+          detailStatus.textContent = "已保存";
+          detailStatus.className = "msg ok";
+        }
+
+        async function requestAiSuggestion(item) {
+          if (!item || !item.entryId || !item.photoId) throw new Error("缺少照片信息");
+          var data = await api(
+            "/api/admin/photo-timeline/entry/" +
+              encodeURIComponent(String(item.entryId || "")) +
+              "/photo/" +
+              encodeURIComponent(String(item.photoId || "")) +
+              "/ai-suggest",
+            {
+              method: "POST",
+              body: JSON.stringify({}),
+            }
+          );
+          return data && data.suggestion ? data.suggestion : null;
+        }
+
+        function fillDetailWithSuggestion(suggestion) {
+          if (!suggestion || typeof suggestion !== "object") return;
+          if (suggestion.caption != null && detailCaption) detailCaption.value = String(suggestion.caption || "").trim();
+          var semantic = suggestion.semantic && typeof suggestion.semantic === "object" ? suggestion.semantic : {};
+          if (detailPeople) detailPeople.value = Array.isArray(semantic.people) ? semantic.people.join(", ") : "";
+          if (detailPlaceName) detailPlaceName.value = semantic.place_name || "";
+          if (detailPlaceCategory) detailPlaceCategory.value = semantic.place_category || "";
+          if (detailScene) detailScene.value = semantic.scene || "";
+          if (detailSceneTags) detailSceneTags.value = Array.isArray(semantic.scene_tags) ? semantic.scene_tags.join(", ") : "";
+          if (detailSummary) detailSummary.value = semantic.summary || "";
+          if (detailSource) detailSource.value = semantic.source || "";
+          if (detailNotes) detailNotes.value = semantic.notes || "";
+        }
+
+        async function runAiForCurrentPhoto() {
+          var item = activeItem();
+          if (!item) throw new Error("请先选择一张照片");
+          state.aiBusy = true;
+          renderDetail();
+          detailStatus.textContent = "AI 分析中…";
+          detailStatus.className = "msg";
+          try {
+            var suggestion = await requestAiSuggestion(item);
+            fillDetailWithSuggestion(suggestion);
+            detailStatus.textContent = "AI 建议已填入，确认后点“保存当前照片”";
+            detailStatus.className = "msg ok";
+          } finally {
+            state.aiBusy = false;
+            renderDetail();
+          }
+        }
+
+        async function saveSuggestionToPhoto(item, suggestion) {
+          if (!item || !suggestion) return;
+          var payload = {
+            caption: suggestion.caption != null ? String(suggestion.caption).trim() : String(item.caption || "").trim(),
+            visibility: String(item.visibility || "public").trim().toLowerCase() === "private" ? "private" : "public",
+            semantic: suggestion.semantic && typeof suggestion.semantic === "object" ? suggestion.semantic : {},
+          };
+          var data = await api(
+            "/api/admin/photo-timeline/entry/" +
+              encodeURIComponent(String(item.entryId || "")) +
+              "/photo/" +
+              encodeURIComponent(String(item.photoId || "")),
+            {
+              method: "PUT",
+              body: JSON.stringify(payload),
+            }
+          );
+          applyEntryPhotoToItem(data && data.entry, item.photoId);
+        }
+
+        async function runAiForSelectedPhotos() {
+          var ids = Array.from(state.selected.values());
+          if (!ids.length) throw new Error("请先选择至少一张照片");
+          if (!confirmTwice("确定对已选照片执行 AI 补全？", "将逐张调用视觉模型并自动保存地点/场景/摘要建议，共 " + ids.length + " 张。people 不会自动识别姓名。")) {
+            return;
+          }
+          state.aiBusy = true;
+          renderDetail();
+          bulkMsg.textContent = "AI 批量处理中… 0 / " + ids.length;
+          bulkMsg.className = "msg";
+          try {
+            var done = 0;
+            for (var i = 0; i < ids.length; i++) {
+              var pid = String(ids[i] || "");
+              var item = null;
+              for (var j = 0; j < state.items.length; j++) {
+                if (state.items[j] && String(state.items[j].photoId) === pid) {
+                  item = state.items[j];
+                  break;
+                }
+              }
+              if (!item) continue;
+              state.activeId = pid;
+              renderGrid();
+              renderDetail();
+              detailStatus.textContent = "AI 分析中… #" + pid;
+              detailStatus.className = "msg";
+              var suggestion = await requestAiSuggestion(item);
+              await saveSuggestionToPhoto(item, suggestion);
+              done += 1;
+              bulkMsg.textContent = "AI 批量处理中… " + done + " / " + ids.length;
+            }
+            renderGrid();
+            renderDetail();
+            bulkMsg.textContent = "AI 批量补全完成，共保存 " + done + " 张";
+            bulkMsg.className = "msg ok";
+          } finally {
+            state.aiBusy = false;
+            renderDetail();
+          }
+        }
+
+        function showErr(msg) {
+          if (!loginMsg) return;
+          loginMsg.textContent = msg;
+          loginMsg.className = "msg err";
+        }
+
+        if (btnLogin) {
+          btnLogin.addEventListener("click", async function () {
+            try {
+              const t = tokenInput ? String(tokenInput.value || "").trim() : "";
+              if (!t) throw new Error("请输入密钥");
+              setToken(t);
+              showMain();
+              await loadPage(true);
+            } catch (e) {
+              showLogin();
+              showErr(String(e.message || e));
+            }
+          });
+        }
+
+        if (btnLogout) {
+          btnLogout.addEventListener("click", async function () {
+            setToken("");
+            try { await fetch("/api/admin/logout", { method: "POST", credentials: "same-origin", headers: { "Content-Type": "application/json" }, body: "{}" }); } catch (e) {}
+            showLogin();
+          });
+        }
+
+        if (btnBulkReload) {
+          btnBulkReload.addEventListener("click", function () {
+            state.q = bulkSearch ? String(bulkSearch.value || "").trim() : "";
+            state.vis = bulkVisFilter ? String(bulkVisFilter.value || "all") : "all";
+            state.entryVis = bulkEntryVisFilter ? String(bulkEntryVisFilter.value || "all") : "all";
+            loadPage(true);
+          });
+        }
+        if (btnBulkLoadMore) {
+          btnBulkLoadMore.addEventListener("click", function () {
+            if (state.nextOffset == null) return;
+            loadPage(false);
+          });
+        }
+        if (btnBulkAiSelected) {
+          btnBulkAiSelected.addEventListener("click", function () {
+            runAiForSelectedPhotos().catch(function (e) {
+              bulkMsg.textContent = String(e.message || e);
+              bulkMsg.className = "msg err";
+              state.aiBusy = false;
+              renderDetail();
+            });
+          });
+        }
+        if (bulkSearch) {
+          bulkSearch.addEventListener(
+            "input",
+            (function () {
+              var timer = null;
+              return function () {
+                clearTimeout(timer);
+                timer = setTimeout(function () {
+                  state.q = String(bulkSearch.value || "").trim();
+                  loadPage(true);
+                }, 260);
+              };
+            })()
+          );
+        }
+        if (bulkVisFilter) {
+          bulkVisFilter.addEventListener("change", function () {
+            state.vis = String(bulkVisFilter.value || "all");
+            loadPage(true);
+          });
+        }
+        if (bulkEntryVisFilter) {
+          bulkEntryVisFilter.addEventListener("change", function () {
+            state.entryVis = String(bulkEntryVisFilter.value || "all");
+            loadPage(true);
+          });
+        }
+        if (btnBulkSelectAll) {
+          btnBulkSelectAll.addEventListener("click", function () {
+            state.items.forEach(function (it) {
+              if (!it || it.photoId == null) return;
+              state.selected.add(String(it.photoId));
+            });
+            if (!state.activeId && state.items.length) state.activeId = String(state.items[0].photoId || "");
+            updateSelectedText();
+            renderGrid();
+            renderDetail();
+          });
+        }
+        if (btnBulkClearSel) {
+          btnBulkClearSel.addEventListener("click", function () {
+            state.selected = new Set();
+            updateSelectedText();
+            renderGrid();
+          });
+        }
+        if (btnBulkSetPublic) {
+          btnBulkSetPublic.addEventListener("click", function () {
+            bulkSetVisibility("public").catch(function (e) {
+              bulkMsg.textContent = String(e.message || e);
+              bulkMsg.className = "msg err";
+            });
+          });
+        }
+        if (btnBulkSetPrivate) {
+          btnBulkSetPrivate.addEventListener("click", function () {
+            bulkSetVisibility("private").catch(function (e) {
+              bulkMsg.textContent = String(e.message || e);
+              bulkMsg.className = "msg err";
+            });
+          });
+        }
+        if (btnSaveDetail) {
+          btnSaveDetail.addEventListener("click", function () {
+            saveCurrentPhoto().catch(function (e) {
+              detailStatus.textContent = String(e.message || e);
+              detailStatus.className = "msg err";
+            });
+          });
+        }
+        if (btnAiSuggestDetail) {
+          btnAiSuggestDetail.addEventListener("click", function () {
+            runAiForCurrentPhoto().catch(function (e) {
+              detailStatus.textContent = String(e.message || e);
+              detailStatus.className = "msg err";
+              state.aiBusy = false;
+              renderDetail();
+            });
+          });
+        }
+        if (btnOpenEntry) {
+          btnOpenEntry.addEventListener("click", function () {
+            var item = activeItem();
+            if (!item || !item.entryId) return;
+            window.open("/admin-photo-timeline.html?entry=" + encodeURIComponent(String(item.entryId)), "_blank", "noopener,noreferrer");
+          });
+        }
+
+        (async function boot() {
+          if (getToken()) {
+            showMain();
+            await loadPage(true);
+            return;
+          }
+          const ok = await tryResumeWithCookieSession();
+          if (ok) {
+            showMain();
+            await loadPage(true);
+            return;
+          }
+          showLogin();
+        })();
+      })();
+    </script>
+  </body>
+</html>

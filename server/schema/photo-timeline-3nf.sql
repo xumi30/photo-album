@@ -20,6 +20,8 @@ CREATE TABLE IF NOT EXISTS timeline_entries (
   -- 展示用地名；若需强范式「地点维表」，可改为 place_id -> places(id)
   place TEXT,
   note TEXT,
+  -- 可见性：public（默认）| private（需登录）
+  visibility TEXT NOT NULL DEFAULT 'public',
   data_version TEXT,
   source_path TEXT,
   updated_at TEXT NOT NULL
@@ -85,6 +87,20 @@ CREATE TABLE IF NOT EXISTS timeline_photos (
   video TEXT,
   caption TEXT,
   ratio TEXT,
+  -- 可见性：public（默认）| private（需登录）
+  visibility TEXT NOT NULL DEFAULT 'public',
+  -- 提取型元数据：优先来自 EXIF / 容器元数据
+  captured_at TEXT,
+  camera_make TEXT,
+  camera_model TEXT,
+  lens_model TEXT,
+  device_model TEXT,
+  gps_latitude REAL,
+  gps_longitude REAL,
+  -- 完整结构化元数据：拍摄参数、分辨率、软件、GPS、原始 EXIF 摘要等
+  metadata_json TEXT,
+  -- 语义信息：人物、地点名称/分类、场景、摘要、备注（通常需人工确认/补充）
+  semantic_json TEXT,
   UNIQUE (entry_id, sort_index)
 );
 
@@ -108,4 +124,3 @@ CREATE TABLE IF NOT EXISTS media_embeddings (
 );
 
 CREATE INDEX IF NOT EXISTS idx_media_embeddings_entity ON media_embeddings (entity_type, entity_id);
-

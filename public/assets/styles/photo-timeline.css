@@ -70,6 +70,50 @@
 
       body.gallery-open { overflow: hidden; }
 
+      .corner-actions {
+        position: fixed;
+        top: 14px;
+        right: 16px;
+        z-index: 50;
+        display: flex;
+        gap: 10px;
+        align-items: center;
+      }
+
+      .corner-actions button {
+        border: 1px solid var(--line-subtle);
+        background: rgba(255, 252, 245, 0.82);
+        border-radius: 999px;
+        padding: 8px 12px;
+        color: var(--accent-deep);
+        font-family: "Noto Sans SC", sans-serif;
+        font-size: 0.82rem;
+        letter-spacing: 0.02em;
+        cursor: pointer;
+        transition: all 0.28s var(--ease);
+        box-shadow: 0 8px 18px rgba(60, 42, 24, 0.08);
+      }
+
+      .corner-actions button:hover {
+        border-color: var(--accent-warm);
+        background: rgba(255, 252, 245, 0.94);
+        transform: translateY(-1px);
+        box-shadow: 0 12px 26px rgba(60, 42, 24, 0.12);
+      }
+
+      .corner-actions button:focus-visible {
+        outline: none;
+        border-color: var(--accent-warm);
+        box-shadow: 0 0 0 3px var(--accent-glow);
+      }
+
+      .corner-actions button:disabled {
+        opacity: 0.6;
+        cursor: not-allowed;
+        transform: none;
+        box-shadow: none;
+      }
+
       ::selection {
         color: var(--bg-cream);
         background: var(--accent-deep);
@@ -1670,4 +1714,3 @@
           max-height: 58vh;
         }
       }
-

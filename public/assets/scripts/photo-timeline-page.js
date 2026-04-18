@@ -44,6 +44,7 @@
   const timeRailPanel = $("timeRailPanel");
   const tagWrap = $("tagWrap");
   const countText = $("countText");
+  const userAuthBtn = $("userAuthBtn");
   const clearBtn = $("clearBtn");
   const timeline = $("timeline");
   const loadMore = $("loadMore");
@@ -175,6 +176,51 @@
     return res.json();
   };
 
+  const postJson = async (url, bodyObj) => {
+    const res = await fetch(resolveUrl(url), {
+      method: "POST",
+      credentials: "same-origin",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(bodyObj != null ? bodyObj : {}),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(data.error || res.statusText || String(res.status));
+    return data;
+  };
+
+  let userSession = { hasSecret: false, loggedIn: false };
+
+  const updateUserAuthBtnUi = () => {
+    if (!userAuthBtn) return;
+    if (!hasApi) {
+      userAuthBtn.style.display = "none";
+      return;
+    }
+    if (!userSession.hasSecret) {
+      userAuthBtn.textContent = "登录（未配置）";
+      userAuthBtn.title = "服务端未配置 PHOTO_TIMELINE_USER_SECRET";
+      userAuthBtn.disabled = true;
+      return;
+    }
+    userAuthBtn.disabled = false;
+    userAuthBtn.textContent = userSession.loggedIn ? "退出" : "登录";
+    userAuthBtn.title = userSession.loggedIn ? "退出登录" : "登录后可查看“需登录”的照片";
+  };
+
+  const refreshUserSession = async () => {
+    if (!hasApi || !userAuthBtn) return;
+    try {
+      const data = await fetchJson("/api/photo-timeline/session");
+      userSession = {
+        hasSecret: !!(data && data.hasSecret),
+        loggedIn: !!(data && data.loggedIn),
+      };
+    } catch {
+      userSession = { hasSecret: false, loggedIn: false };
+    }
+    updateUserAuthBtnUi();
+  };
+
   const buildApiEntriesUrl = (options = {}) => {
     const url = new URL(resolveUrl(boot.entriesUrl), window.location.href);
     const offset = Math.max(0, Math.floor(Number(options.offset) || 0));
@@ -234,6 +280,36 @@
       append: false,
     });
   };
+
+  if (userAuthBtn) {
+    updateUserAuthBtnUi();
+    refreshUserSession();
+    userAuthBtn.addEventListener("click", async function () {
+      if (!hasApi) return;
+      try {
+        if (userSession.loggedIn) {
+          await postJson("/api/photo-timeline/logout", {});
+          await refreshUserSession();
+          await reloadEntriesFromApi();
+          render();
+          return;
+        }
+
+        if (!userSession.hasSecret) {
+          throw new Error("服务端未配置 PHOTO_TIMELINE_USER_SECRET");
+        }
+
+        var token = window.prompt("输入访问口令（登录后可查看“需登录”的照片）");
+        if (!String(token || "").trim()) return;
+        await postJson("/api/photo-timeline/login", { token: String(token || "").trim() });
+        await refreshUserSession();
+        await reloadEntriesFromApi();
+        render();
+      } catch (e) {
+        window.alert(String((e && e.message) || e));
+      }
+    });
+  }
 
   const resolveGpsLabelRemote = async (entryId, alsoEntryIds) => {
     const url = resolveUrl(

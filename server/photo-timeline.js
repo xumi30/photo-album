@@ -2,11 +2,19 @@
  * Photo timeline: SQLite + scan public/assets/live (recursive) for photo-timeline-entry.json
  */
 import crypto from "node:crypto";
+import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import Database from "better-sqlite3";
 import { getWriteSecret } from "./admin-auth.js";
+import {
+  assertUserLoginToken,
+  clearUserSessionCookie,
+  getUserSecret,
+  isUserLoggedIn,
+  issueUserSessionCookie,
+} from "./user-auth.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PHOTO_TIMELINE_SCHEMA_PATH = path.join(__dirname, "schema", "photo-timeline-3nf.sql");
@@ -52,11 +60,103 @@ function resolveVerifiedPublicFilePath(publicDir, rel) {
   return abs;
 }
 
-function tryUnlinkPublicMedia(publicDir, rel) {
-  const r = String(rel || "").trim();
+function resolveVerifiedSiteFilePath(publicDir, liveRoot, relOrAbs) {
+  const raw = String(relOrAbs || "").trim();
+  if (!raw) throw new Error("非法路径");
+
+  // 兼容 source_path 被写成绝对路径（PHOTO_TIMELINE_LIVE_ROOT 不在 public 内时）。
+  if (path.isAbsolute(raw)) {
+    const abs = path.resolve(raw);
+    const pub = path.resolve(publicDir);
+    const live = path.resolve(liveRoot);
+    const relToPub = path.relative(pub, abs);
+    const relToLive = path.relative(live, abs);
+    const inPublic = !(relToPub.startsWith("..") || path.isAbsolute(relToPub));
+    const inLive = !(relToLive.startsWith("..") || path.isAbsolute(relToLive));
+    if (!inPublic && !inLive) throw new Error("非法路径");
+    return abs;
+  }
+
+  const safeRel = assertSafePublicRelativePath(raw);
+  const norm = safeRel.replace(/\\/g, "/");
+  if (norm === "assets/live" || norm.startsWith("assets/live/")) {
+    const sub = norm.slice("assets/live".length).replace(/^\/+/, "");
+    const abs = path.resolve(liveRoot, sub);
+    const live = path.resolve(liveRoot);
+    const relBack = path.relative(live, abs);
+    if (relBack.startsWith("..") || path.isAbsolute(relBack)) {
+      throw new Error("非法路径");
+    }
+    return abs;
+  }
+
+  return resolveVerifiedPublicFilePath(publicDir, norm);
+}
+
+function getOpenAIBaseUrl() {
+  return String(process.env.OPENAI_BASE_URL || "https://api.openai.com/v1").trim().replace(/\/+$/, "");
+}
+
+function getPhotoTimelineVisionModel() {
+  return String(process.env.PHOTO_TIMELINE_VISION_MODEL || "gpt-4.1-mini").trim();
+}
+
+function getPhotoTimelineVisionPromptOverride() {
+  return String(process.env.PHOTO_TIMELINE_VISION_PROMPT || "").trim();
+}
+
+function getOpenAIApiKey() {
+  return String(process.env.OPENAI_API_KEY || "").trim();
+}
+
+function inferMimeTypeFromPath(filepath) {
+  const ext = path.extname(String(filepath || "")).toLowerCase();
+  if (ext === ".jpg" || ext === ".jpeg") return "image/jpeg";
+  if (ext === ".png") return "image/png";
+  if (ext === ".webp") return "image/webp";
+  if (ext === ".gif") return "image/gif";
+  return "";
+}
+
+function extractOpenAIResponseText(payload) {
+  if (!payload || typeof payload !== "object") return "";
+  if (typeof payload.output_text === "string" && payload.output_text.trim()) {
+    return payload.output_text.trim();
+  }
+  const output = Array.isArray(payload.output) ? payload.output : [];
+  for (const item of output) {
+    const content = Array.isArray(item && item.content) ? item.content : [];
+    for (const part of content) {
+      if (part && typeof part.text === "string" && part.text.trim()) return part.text.trim();
+    }
+  }
+  return "";
+}
+
+function pickPhotoAnalysisAsset(publicDir, liveRoot, photoRow) {
+  const candidates = [photoRow && photoRow.src, photoRow && photoRow.thumb];
+  for (const rel of candidates) {
+    const raw = String(rel || "").trim();
+    if (!raw) continue;
+    let abs = "";
+    try {
+      abs = resolveVerifiedSiteFilePath(publicDir, liveRoot, raw);
+    } catch {
+      continue;
+    }
+    if (!abs || !fs.existsSync(abs)) continue;
+    const mime = inferMimeTypeFromPath(abs);
+    if (!mime) continue;
+    return { absPath: abs, mimeType: mime, relPath: raw };
+  }
+  throw new Error("未找到可供 AI 分析的图片资源（当前仅支持 jpg/png/webp/gif）");
+}
+
+function tryUnlinkSiteMedia(publicDir, liveRoot, relOrAbs) {
+  const r = String(relOrAbs || "").trim();
   if (!r) return false;
   try {
-    const abs = resolveVerifiedPublicFilePath(publicDir, r);
+    const abs = resolveVerifiedSiteFilePath(publicDir, liveRoot, r);
     if (!fs.existsSync(abs)) return false;
     fs.unlinkSync(abs);
     return true;
@@ -65,7 +165,7 @@ function tryUnlinkPublicMedia(publicDir, rel) {
   }
 }
 
-function removeEntryFromSourceJsonFiles(publicDir, entryId, sourceRelRaw) {
+function removeEntryFromSourceJsonFiles(publicDir, liveRoot, entryId, sourceRelRaw) {
   const id = String(entryId || "");
   if (!id) return;
   const raw = String(sourceRelRaw || "").trim();
@@ -79,7 +179,7 @@ function removeEntryFromSourceJsonFiles(publicDir, entryId, sourceRelRaw) {
   for (const rel of parts) {
     let abs;
     try {
-      abs = resolveVerifiedPublicFilePath(publicDir, rel);
+      abs = resolveVerifiedSiteFilePath(publicDir, liveRoot, rel);
     } catch {
       continue;
     }
@@ -104,7 +204,7 @@ function removeEntryFromSourceJsonFiles(publicDir, entryId, sourceRelRaw) {
   }
 }
 
-function removePhotoFromSourceJsonFiles(publicDir, entryId, photoRow, sourceRelRaw) {
+function removePhotoFromSourceJsonFiles(publicDir, liveRoot, entryId, photoRow, sourceRelRaw) {
   const id = String(entryId || "");
   if (!id || !photoRow || typeof photoRow !== "object") return;
   const src = photoRow.src != null ? String(photoRow.src) : "";
@@ -121,7 +221,7 @@ function removePhotoFromSourceJsonFiles(publicDir, entryId, photoRow, sourceRelR
   for (const rel of parts) {
     let abs;
     try {
-      abs = resolveVerifiedPublicFilePath(publicDir, rel);
+      abs = resolveVerifiedSiteFilePath(publicDir, liveRoot, rel);
     } catch {
       continue;
     }
@@ -199,6 +299,8 @@ function ensurePhotoTimelineSchema(db) {
   }
   db.exec(fs.readFileSync(PHOTO_TIMELINE_SCHEMA_PATH, "utf8"));
   ensureTimelineEntryBusinessColumns(db);
+  ensureTimelineEntryVisibilityColumn(db);
+  ensureTimelinePhotoBusinessColumns(db);
   migrateTimelineEntryBusinessModel(db);
   migrateGpsGridTruncateV2(db);
 }
@@ -283,6 +385,205 @@ function ensureTimelineEntryBusinessColumns(db) {
   }
 }
 
+function ensureTimelineEntryVisibilityColumn(db) {
+  const info = db.prepare("PRAGMA table_info(timeline_entries)").all();
+  const names = new Set(info.map((c) => c.name));
+  if (!names.has("visibility")) {
+    db.exec(`ALTER TABLE timeline_entries ADD COLUMN visibility TEXT NOT NULL DEFAULT 'public';`);
+  }
+}
+
+function ensureTimelinePhotoBusinessColumns(db) {
+  const info = db.prepare("PRAGMA table_info(timeline_photos)").all();
+  const names = new Set(info.map((c) => c.name));
+  if (!names.has("visibility")) {
+    db.exec(`ALTER TABLE timeline_photos ADD COLUMN visibility TEXT NOT NULL DEFAULT 'public';`);
+  }
+  if (!names.has("captured_at")) {
+    db.exec(`ALTER TABLE timeline_photos ADD COLUMN captured_at TEXT;`);
+  }
+  if (!names.has("camera_make")) {
+    db.exec(`ALTER TABLE timeline_photos ADD COLUMN camera_make TEXT;`);
+  }
+  if (!names.has("camera_model")) {
+    db.exec(`ALTER TABLE timeline_photos ADD COLUMN camera_model TEXT;`);
+  }
+  if (!names.has("lens_model")) {
+    db.exec(`ALTER TABLE timeline_photos ADD COLUMN lens_model TEXT;`);
+  }
+  if (!names.has("device_model")) {
+    db.exec(`ALTER TABLE timeline_photos ADD COLUMN device_model TEXT;`);
+  }
+  if (!names.has("gps_latitude")) {
+    db.exec(`ALTER TABLE timeline_photos ADD COLUMN gps_latitude REAL;`);
+  }
+  if (!names.has("gps_longitude")) {
+    db.exec(`ALTER TABLE timeline_photos ADD COLUMN gps_longitude REAL;`);
+  }
+  if (!names.has("metadata_json")) {
+    db.exec(`ALTER TABLE timeline_photos ADD COLUMN metadata_json TEXT;`);
+  }
+  if (!names.has("semantic_json")) {
+    db.exec(`ALTER TABLE timeline_photos ADD COLUMN semantic_json TEXT;`);
+  }
+}
+
+function parseJsonObjectOrNull(raw) {
+  if (raw == null || String(raw).trim() === "") return null;
+  try {
+    const out = JSON.parse(String(raw));
+    return out && typeof out === "object" ? out : null;
+  } catch {
+    return null;
+  }
+}
+
+function normalizePhotoSemanticInput(value) {
+  if (!value || typeof value !== "object") return null;
+  const asList = (v) =>
+    Array.isArray(v) ? v.map((x) => String(x || "").trim()).filter(Boolean) : [];
+  const out = {
+    people: asList(value.people),
+    place_name: value.place_name != null ? String(value.place_name).trim() : "",
+    place_category: value.place_category != null ? String(value.place_category).trim() : "",
+    scene: value.scene != null ? String(value.scene).trim() : "",
+    scene_tags: asList(value.scene_tags),
+    summary: value.summary != null ? String(value.summary).trim() : "",
+    source: value.source != null ? String(value.source).trim() : "",
+    notes: value.notes != null ? String(value.notes).trim() : "",
+  };
+  const hasAny =
+    out.people.length ||
+    out.place_name ||
+    out.place_category ||
+    out.scene ||
+    out.scene_tags.length ||
+    out.summary ||
+    out.source ||
+    out.notes;
+  return hasAny ? out : null;
+}
+
+function normalizePhotoMetadataInput(value) {
+  if (!value || typeof value !== "object") return null;
+  const raw = { ...value };
+  const gpsIn = raw.gps && typeof raw.gps === "object" ? raw.gps : {};
+  const out = {
+    captured_at: raw.captured_at != null ? String(raw.captured_at).trim() : "",
+    datetime_original: raw.datetime_original != null ? String(raw.datetime_original).trim() : "",
+    datetime_digitized: raw.datetime_digitized != null ? String(raw.datetime_digitized).trim() : "",
+    datetime_file: raw.datetime_file != null ? String(raw.datetime_file).trim() : "",
+    camera_make: raw.camera_make != null ? String(raw.camera_make).trim() : "",
+    camera_model: raw.camera_model != null ? String(raw.camera_model).trim() : "",
+    lens_model: raw.lens_model != null ? String(raw.lens_model).trim() : "",
+    device_model: raw.device_model != null ? String(raw.device_model).trim() : "",
+    aperture_f_number:
+      raw.aperture_f_number != null && Number.isFinite(Number(raw.aperture_f_number))
+        ? Number(raw.aperture_f_number)
+        : null,
+    exposure_time_s:
+      raw.exposure_time_s != null && Number.isFinite(Number(raw.exposure_time_s))
+        ? Number(raw.exposure_time_s)
+        : null,
+    exposure_time_text: raw.exposure_time_text != null ? String(raw.exposure_time_text).trim() : "",
+    iso:
+      raw.iso != null && Number.isFinite(Number(raw.iso)) ? Math.floor(Number(raw.iso)) : null,
+    focal_length_mm:
+      raw.focal_length_mm != null && Number.isFinite(Number(raw.focal_length_mm))
+        ? Number(raw.focal_length_mm)
+        : null,
+    width_px:
+      raw.width_px != null && Number.isFinite(Number(raw.width_px))
+        ? Math.floor(Number(raw.width_px))
+        : null,
+    height_px:
+      raw.height_px != null && Number.isFinite(Number(raw.height_px))
+        ? Math.floor(Number(raw.height_px))
+        : null,
+    software: raw.software != null ? String(raw.software).trim() : "",
+    gps: {
+      latitude:
+        gpsIn.latitude != null && Number.isFinite(Number(gpsIn.latitude))
+          ? Number(gpsIn.latitude)
+          : null,
+      longitude:
+        gpsIn.longitude != null && Number.isFinite(Number(gpsIn.longitude))
+          ? Number(gpsIn.longitude)
+          : null,
+      altitude_m:
+        gpsIn.altitude_m != null && Number.isFinite(Number(gpsIn.altitude_m))
+          ? Number(gpsIn.altitude_m)
+          : null,
+      label: gpsIn.label != null ? String(gpsIn.label).trim() : "",
+    },
+    apple_photos: raw.apple_photos && typeof raw.apple_photos === "object" ? raw.apple_photos : null,
+    raw_exif: raw.raw_exif && typeof raw.raw_exif === "object" ? raw.raw_exif : null,
+  };
+  const hasAny =
+    out.captured_at ||
+    out.datetime_original ||
+    out.datetime_digitized ||
+    out.datetime_file ||
+    out.camera_make ||
+    out.camera_model ||
+    out.lens_model ||
+    out.device_model ||
+    out.aperture_f_number != null ||
+    out.exposure_time_s != null ||
+    out.exposure_time_text ||
+    out.iso != null ||
+    out.focal_length_mm != null ||
+    out.width_px != null ||
+    out.height_px != null ||
+    out.software ||
+    out.gps.latitude != null ||
+    out.gps.longitude != null ||
+    out.gps.altitude_m != null ||
+    out.gps.label ||
+    out.apple_photos ||
+    out.raw_exif;
+  return hasAny ? out : null;
+}
+
+function photoColumnsFromObjects(metadata, semantic) {
+  const normMeta = normalizePhotoMetadataInput(metadata);
+  const normSemantic = normalizePhotoSemanticInput(semantic);
+  return {
+    captured_at:
+      normMeta && normMeta.captured_at
+        ? normMeta.captured_at
+        : normMeta && normMeta.datetime_original
+          ? normMeta.datetime_original
+          : null,
+    camera_make: normMeta && normMeta.camera_make ? normMeta.camera_make : null,
+    camera_model: normMeta && normMeta.camera_model ? normMeta.camera_model : null,
+    lens_model: normMeta && normMeta.lens_model ? normMeta.lens_model : null,
+    device_model: normMeta && normMeta.device_model ? normMeta.device_model : null,
+    gps_latitude: normMeta && normMeta.gps && normMeta.gps.latitude != null ? normMeta.gps.latitude : null,
+    gps_longitude:
+      normMeta && normMeta.gps && normMeta.gps.longitude != null ? normMeta.gps.longitude : null,
+    metadata_json: normMeta ? JSON.stringify(normMeta) : null,
+    semantic_json: normSemantic ? JSON.stringify(normSemantic) : null,
+  };
+}
+
+function materializePhotoMetadataFromRow(row) {
+  const parsed = parseJsonObjectOrNull(row && row.metadata_json);
+  if (parsed) return parsed;
+  return normalizePhotoMetadataInput({
+    captured_at: row && row.captured_at != null ? row.captured_at : null,
+    datetime_original: row && row.captured_at != null ? row.captured_at : null,
+    camera_make: row && row.camera_make != null ? row.camera_make : null,
+    camera_model: row && row.camera_model != null ? row.camera_model : null,
+    lens_model: row && row.lens_model != null ? row.lens_model : null,
+    device_model: row && row.device_model != null ? row.device_model : null,
+    gps: {
+      latitude: row && row.gps_latitude != null ? row.gps_latitude : null,
+      longitude: row && row.gps_longitude != null ? row.gps_longitude : null,
+    },
+  });
+}
+
 function renumberTimelinePhotos(db, entryId) {
   const rows = db
     .prepare(`SELECT id FROM timeline_photos WHERE entry_id = ? ORDER BY sort_index ASC, id ASC`)
@@ -298,6 +599,70 @@ function renumberTimelinePhotos(db, entryId) {
  * @param {unknown[]} photos
  */
 function mergePhotosFromIncomingForUpsert(db, entryId, photos) {
+  const isVideoPath = (rel) => /\.(mov|mp4|webm|m4v)$/i.test(String(rel || ""));
+  const pickString = (obj, keys) => {
+    if (!obj || typeof obj !== "object") return "";
+    for (const k of keys) {
+      if (obj[k] == null) continue;
+      const s = String(obj[k]).trim();
+      if (s) return s;
+    }
+    return "";
+  };
+  const pickVisibility = (p) => {
+    if (!p || typeof p !== "object") return null;
+    const hasOwn = (k) => Object.prototype.hasOwnProperty.call(p, k);
+    let explicit = false;
+    let raw = "";
+    if (hasOwn("visibility")) {
+      explicit = true;
+      raw = p.visibility;
+    } else if (hasOwn("scope")) {
+      explicit = true;
+      raw = p.scope;
+    } else if (hasOwn("private")) {
+      explicit = true;
+      raw = p.private === true || p.private === 1 ? "private" : "public";
+    }
+    if (!explicit) return null;
+    const s = String(raw || "").trim().toLowerCase();
+    if (s === "private" || s === "login" || s === "authed" || s === "auth") return "private";
+    return "public";
+  };
+  const normalizeIncomingPhoto = (p) => {
+    const thumbIn = pickString(p, ["thumb", "thum"]);
+    const srcIn = pickString(p, ["src", "preview"]);
+    const videoIn = pickString(p, ["video", "mov"]);
+    const visibility = pickVisibility(p);
+    const extra = photoColumnsFromObjects(p.metadata, p.semantic);
+    const caption = p.caption != null ? String(p.caption) : null;
+    const ratio = p.ratio != null ? String(p.ratio) : null;
+
+    let thumb = thumbIn;
+    let src = srcIn;
+    let video = videoIn;
+
+    // 允许只传一个：缺 thumb 默认用 preview（src）；缺 preview 默认用 thumb
+    if (!src && thumb) src = thumb;
+    if (!thumb && src) thumb = src;
+
+    // mov 不传默认与 preview（src）一致（仅当 preview/thumbnail 本身是视频路径时）
+    if (!video) {
+      if (src && isVideoPath(src)) video = src;
+      else if (thumb && isVideoPath(thumb)) video = thumb;
+    }
+
+    return {
+      thumb: thumb || null,
+      src: src || null,
+      video: video || null,
+      caption,
+      ratio,
+      visibility,
+      ...extra,
+    };
+  };
+
   const incoming = Array.isArray(photos) ? photos : [];
   const existing = db.prepare(`SELECT id, src FROM timeline_photos WHERE entry_id = ?`).all(entryId);
   const bySrc = new Map();
@@ -310,21 +675,92 @@ function mergePhotosFromIncomingForUpsert(db, entryId, photos) {
     `SELECT COALESCE(MAX(sort_index), -1) AS m FROM timeline_photos WHERE entry_id = ?`
   );
   const insPhoto = db.prepare(`
-    INSERT INTO timeline_photos (entry_id, sort_index, thumb, src, video, caption, ratio)
-    VALUES (@entry_id, @sort_index, @thumb, @src, @video, @caption, @ratio)
+    INSERT INTO timeline_photos (
+      entry_id, sort_index, thumb, src, video, caption, ratio, visibility,
+      captured_at, camera_make, camera_model, lens_model, device_model,
+      gps_latitude, gps_longitude, metadata_json, semantic_json
+    )
+    VALUES (
+      @entry_id, @sort_index, @thumb, @src, @video, @caption, @ratio, @visibility,
+      @captured_at, @camera_make, @camera_model, @lens_model, @device_model,
+      @gps_latitude, @gps_longitude, @metadata_json, @semantic_json
+    )
   `);
-  const updPhoto = db.prepare(
-    `UPDATE timeline_photos SET thumb = ?, video = ?, caption = ?, ratio = ? WHERE id = ?`
+  const updPhotoNoVis = db.prepare(
+    `UPDATE timeline_photos
+     SET thumb = ?, video = ?, caption = ?, ratio = ?,
+         captured_at = COALESCE(?, captured_at),
+         camera_make = COALESCE(?, camera_make),
+         camera_model = COALESCE(?, camera_model),
+         lens_model = COALESCE(?, lens_model),
+         device_model = COALESCE(?, device_model),
+         gps_latitude = COALESCE(?, gps_latitude),
+         gps_longitude = COALESCE(?, gps_longitude),
+         metadata_json = COALESCE(?, metadata_json),
+         semantic_json = COALESCE(?, semantic_json)
+     WHERE id = ?`
+  );
+  const updPhotoWithVis = db.prepare(
+    `UPDATE timeline_photos
+     SET thumb = ?, video = ?, caption = ?, ratio = ?, visibility = ?,
+         captured_at = COALESCE(?, captured_at),
+         camera_make = COALESCE(?, camera_make),
+         camera_model = COALESCE(?, camera_model),
+         lens_model = COALESCE(?, lens_model),
+         device_model = COALESCE(?, device_model),
+         gps_latitude = COALESCE(?, gps_latitude),
+         gps_longitude = COALESCE(?, gps_longitude),
+         metadata_json = COALESCE(?, metadata_json),
+         semantic_json = COALESCE(?, semantic_json)
+     WHERE id = ?`
   );
   for (const p of incoming) {
     if (!p || typeof p !== "object") continue;
-    const thumb = p.thumb != null ? String(p.thumb) : null;
-    const src = p.src != null ? String(p.src) : null;
-    const video = p.video != null ? String(p.video) : null;
-    const caption = p.caption != null ? String(p.caption) : null;
-    const ratio = p.ratio != null ? String(p.ratio) : null;
+    const norm = normalizeIncomingPhoto(p);
+    const thumb = norm.thumb;
+    const src = norm.src;
+    const video = norm.video;
+    const caption = norm.caption;
+    const ratio = norm.ratio;
+    const visibility = norm.visibility;
     if (src && bySrc.has(src)) {
-      updPhoto.run(thumb, video, caption, ratio, bySrc.get(src));
+      const pid = bySrc.get(src);
+      if (visibility == null) {
+        updPhotoNoVis.run(
+          thumb,
+          video,
+          caption,
+          ratio,
+          norm.captured_at,
+          norm.camera_make,
+          norm.camera_model,
+          norm.lens_model,
+          norm.device_model,
+          norm.gps_latitude,
+          norm.gps_longitude,
+          norm.metadata_json,
+          norm.semantic_json,
+          pid
+        );
+      } else {
+        updPhotoWithVis.run(
+          thumb,
+          video,
+          caption,
+          ratio,
+          visibility,
+          norm.captured_at,
+          norm.camera_make,
+          norm.camera_model,
+          norm.lens_model,
+          norm.device_model,
+          norm.gps_latitude,
+          norm.gps_longitude,
+          norm.metadata_json,
+          norm.semantic_json,
+          pid
+        );
+      }
     } else if (src) {
       const m = maxSortStmt.get(entryId);
       const idx = (m && m.m != null ? m.m : -1) + 1;
@@ -336,6 +772,16 @@ function mergePhotosFromIncomingForUpsert(db, entryId, photos) {
         video,
         caption,
         ratio,
+        visibility: visibility || "public",
+        captured_at: norm.captured_at,
+        camera_make: norm.camera_make,
+        camera_model: norm.camera_model,
+        lens_model: norm.lens_model,
+        device_model: norm.device_model,
+        gps_latitude: norm.gps_latitude,
+        gps_longitude: norm.gps_longitude,
+        metadata_json: norm.metadata_json,
+        semantic_json: norm.semantic_json,
       });
       const newId = Number(info.lastInsertRowid);
       if (Number.isFinite(newId) && newId > 0) {
@@ -352,6 +798,16 @@ function mergePhotosFromIncomingForUpsert(db, entryId, photos) {
         video,
         caption,
         ratio,
+        visibility: visibility || "public",
+        captured_at: norm.captured_at,
+        camera_make: norm.camera_make,
+        camera_model: norm.camera_model,
+        lens_model: norm.lens_model,
+        device_model: norm.device_model,
+        gps_latitude: norm.gps_latitude,
+        gps_longitude: norm.gps_longitude,
+        metadata_json: norm.metadata_json,
+        semantic_json: norm.semantic_json,
       });
     }
   }
@@ -993,13 +1449,17 @@ function loadChildMapsForEntryIds(db, ids) {
 
   const photoRows = db
     .prepare(
-      `SELECT id, entry_id, thumb, src, video, caption, ratio, sort_index
+      `SELECT id, entry_id, thumb, src, video, caption, ratio, visibility, sort_index,
+              captured_at, camera_make, camera_model, lens_model, device_model,
+              gps_latitude, gps_longitude, metadata_json, semantic_json
        FROM timeline_photos WHERE entry_id IN (${ph})
        ORDER BY entry_id, sort_index ASC`
     )
     .all(...ids);
   for (const p of photoRows) {
     if (!photosByEntry.has(p.entry_id)) photosByEntry.set(p.entry_id, []);
+    const metadata = materializePhotoMetadataFromRow(p);
+    const semantic = parseJsonObjectOrNull(p.semantic_json);
     photosByEntry.get(p.entry_id).push({
       id: p.id != null ? Number(p.id) : null,
       thumb: p.thumb != null ? p.thumb : null,
@@ -1007,6 +1467,9 @@ function loadChildMapsForEntryIds(db, ids) {
       video: p.video != null ? p.video : null,
       caption: p.caption != null ? p.caption : null,
       ratio: p.ratio != null ? p.ratio : null,
+      visibility: p.visibility != null ? String(p.visibility) : "public",
+      metadata: metadata || null,
+      semantic: semantic || null,
     });
   }
 
@@ -1061,6 +1524,10 @@ function assembleClientEntry(row, maps) {
     title: row.title != null ? row.title : "",
     place: row.place != null ? row.place : "",
     note: row.note != null ? row.note : "",
+    visibility:
+      row.visibility != null && String(row.visibility).trim() !== ""
+        ? String(row.visibility)
+        : "public",
     tags: tagsByEntry.get(id) || [],
     gps,
     weather,
@@ -1075,7 +1542,7 @@ function assembleClientEntry(row, maps) {
 export function readOneTimelineEntry(db, id) {
   const row = db
     .prepare(
-      `SELECT id, calendar_date, gps_grid_key, date, title, place, note, data_version, source_path, updated_at
+      `SELECT id, calendar_date, gps_grid_key, date, title, place, note, visibility, data_version, source_path, updated_at
        FROM timeline_entries WHERE id = ?`
     )
     .get(id);
@@ -1108,8 +1575,8 @@ function upsertNormalizedEntryFromObject(db, entry, sourceRel, updatedAt) {
   const dataVersion = entry.data_version != null ? String(entry.data_version) : null;
 
   const insMain = db.prepare(`
-    INSERT INTO timeline_entries (id, calendar_date, gps_grid_key, date, title, place, note, data_version, source_path, updated_at)
-    VALUES (@id, @calendar_date, @gps_grid_key, @date, @title, @place, @note, @data_version, @source_path, @updated_at)
+    INSERT INTO timeline_entries (id, calendar_date, gps_grid_key, date, title, place, note, visibility, data_version, source_path, updated_at)
+    VALUES (@id, @calendar_date, @gps_grid_key, @date, @title, @place, @note, @visibility, @data_version, @source_path, @updated_at)
     ON CONFLICT(id) DO UPDATE SET
       calendar_date = excluded.calendar_date,
       gps_grid_key = excluded.gps_grid_key,
@@ -1117,6 +1584,7 @@ function upsertNormalizedEntryFromObject(db, entry, sourceRel, updatedAt) {
       title = excluded.title,
       place = excluded.place,
       note = excluded.note,
+      visibility = excluded.visibility,
       data_version = excluded.data_version,
       source_path = excluded.source_path,
       updated_at = excluded.updated_at
@@ -1144,6 +1612,15 @@ function upsertNormalizedEntryFromObject(db, entry, sourceRel, updatedAt) {
     )
   `);
 
+  const incomingVisRaw = entry.visibility != null ? String(entry.visibility) : "";
+  const incomingVis = incomingVisRaw.trim().toLowerCase() === "private" ? "private" : "";
+  const prevRow = db.prepare(`SELECT visibility FROM timeline_entries WHERE id = ?`).get(id);
+  const prevVis =
+    prevRow && prevRow.visibility != null && String(prevRow.visibility).trim().toLowerCase() === "private"
+      ? "private"
+      : "public";
+  const visibility = incomingVis ? "private" : prevRow ? prevVis : "public";
+
   const run = db.transaction(() => {
     insMain.run({
       id,
@@ -1153,6 +1630,7 @@ function upsertNormalizedEntryFromObject(db, entry, sourceRel, updatedAt) {
       title,
       place,
       note,
+      visibility,
       data_version: dataVersion,
       source_path: sourceRel,
       updated_at: updatedAt,
@@ -1207,9 +1685,15 @@ function upsertNormalizedEntryFromObject(db, entry, sourceRel, updatedAt) {
  * @param {string} id
  * @param {Record<string, unknown>} entry
  */
-function writeEntryToSourceJsonFile(publicDir, sourceRel, id, entry) {
+function writeEntryToSourceJsonFile(publicDir, serverDir, sourceRel, id, entry) {
   if (!sourceRel) return;
-  const absPath = path.join(publicDir, sourceRel);
+  const liveRoot = resolvePhotoTimelineLiveRoot(publicDir, serverDir);
+  let absPath;
+  try {
+    absPath = resolveVerifiedSiteFilePath(publicDir, liveRoot, sourceRel);
+  } catch {
+    return;
+  }
   if (!fs.existsSync(absPath)) return;
   let fileJson;
   try {
@@ -1529,7 +2013,7 @@ export function readAllTimelineEntries(opts) {
   const order = sortDesc ? "DESC" : "ASC";
   const mainRows = db
     .prepare(
-      `SELECT id, calendar_date, gps_grid_key, date, title, place, note, data_version, source_path, updated_at
+      `SELECT id, calendar_date, gps_grid_key, date, title, place, note, visibility, data_version, source_path, updated_at
        FROM timeline_entries ORDER BY calendar_date ${order}, gps_grid_key ${order === "DESC" ? "DESC" : "ASC"}, id ${order}`
     )
     .all();
@@ -1575,7 +2059,7 @@ export function readTimelineEntriesPage(opts) {
   const offset = Math.max(0, Math.min(offsetBase, Math.max(0, total - 1)));
   const mainRows = db
     .prepare(
-      `SELECT id, calendar_date, gps_grid_key, date, title, place, note, data_version, source_path, updated_at
+      `SELECT id, calendar_date, gps_grid_key, date, title, place, note, visibility, data_version, source_path, updated_at
        FROM timeline_entries e
        ${built.whereSql}
        ${timelineOrderSql(sortDesc)}
@@ -1611,6 +2095,7 @@ export function readTimelineEntriesPage(opts) {
 export function readTimelineMapPoints(opts) {
   const serverDir = opts.serverDir;
   const sortDesc = opts.sortDesc !== false;
+  const allowPrivate = opts.allowPrivate === true;
   const dbPath = path.join(serverDir, ".data", "photo-timeline.sqlite");
   if (!fs.existsSync(dbPath)) {
     return { points: [], total: 0 };
@@ -1620,7 +2105,7 @@ export function readTimelineMapPoints(opts) {
   ensurePhotoTimelineSchema(db);
   const mainRows = db
     .prepare(
-      `SELECT e.id, e.calendar_date, e.gps_grid_key, e.date, e.title, e.place, e.note, e.data_version, e.source_path, e.updated_at
+      `SELECT e.id, e.calendar_date, e.gps_grid_key, e.date, e.title, e.place, e.note, e.visibility, e.data_version, e.source_path, e.updated_at
        FROM timeline_entries e
        JOIN entry_gps g ON g.entry_id = e.id
        WHERE g.latitude IS NOT NULL AND g.longitude IS NOT NULL
@@ -1636,7 +2121,16 @@ export function readTimelineMapPoints(opts) {
     .map((entry) => {
       const coords = _readGpsCoords(entry.gps);
       if (!coords) return null;
-      const cover = Array.isArray(entry.photos) && entry.photos.length ? entry.photos[0] : null;
+      if (!isEntryVisibleForViewer(entry, allowPrivate)) return null;
+      const photos = Array.isArray(entry.photos) ? entry.photos.slice() : [];
+      const visiblePhotos = photos.filter((p) => {
+        if (!p || typeof p !== "object") return false;
+        const v = p.visibility != null ? String(p.visibility).toLowerCase() : "public";
+        if (v !== "private") return true;
+        return allowPrivate;
+      });
+      if (!visiblePhotos.length) return null;
+      const cover = visiblePhotos.length ? visiblePhotos[0] : null;
       return {
         id: String(entry.id || ""),
         date: entry.date != null ? String(entry.date) : "",
@@ -1651,7 +2145,7 @@ export function readTimelineMapPoints(opts) {
           label:
             entry.gps && entry.gps.label != null ? String(entry.gps.label).trim() : "",
         },
-        photoCount: Array.isArray(entry.photos) ? entry.photos.length : 0,
+        photoCount: visiblePhotos.length,
         cover: cover
           ? {
               thumb: cover.thumb != null ? String(cover.thumb) : "",
@@ -1664,6 +2158,460 @@ export function readTimelineMapPoints(opts) {
     .filter(Boolean);
 
   return { points, total: points.length };
+}
+
+function filterEntryPhotosByVisibility(entry, allowPrivate) {
+  if (!entry || typeof entry !== "object") return entry;
+  const photos = Array.isArray(entry.photos) ? entry.photos : [];
+  entry.photos = photos.filter((p) => {
+    if (!p || typeof p !== "object") return false;
+    const v = p.visibility != null ? String(p.visibility).toLowerCase() : "public";
+    if (v !== "private") return true;
+    return allowPrivate;
+  });
+  return entry;
+}
+
+function isEntryVisibleForViewer(entry, allowPrivate) {
+  if (!entry || typeof entry !== "object") return false;
+  const v = entry.visibility != null ? String(entry.visibility).trim().toLowerCase() : "public";
+  if (v === "private") return allowPrivate;
+  return true;
+}
+
+/**
+ * 后台：分页读取所有照片（平铺结构，便于批量操作）。
+ * @param {{ serverDir: string; offset?: number; limit?: number; query?: string; visibility?: string; entryVisibility?: string }} opts
+ */
+export function readTimelinePhotosPage(opts) {
+  const serverDir = opts.serverDir;
+  const offset = Math.max(0, Math.floor(Number(opts.offset) || 0));
+  const limit = Math.max(1, Math.min(2000, Math.floor(Number(opts.limit) || 500)));
+  const q = String(opts.query || "").trim().toLowerCase();
+  const vis = String(opts.visibility || "").trim().toLowerCase();
+  const evis = String(opts.entryVisibility || "").trim().toLowerCase();
+
+  const dbPath = path.join(serverDir, ".data", "photo-timeline.sqlite");
+  if (!fs.existsSync(dbPath)) {
+    return { items: [], total: 0, offset, limit, nextOffset: null };
+  }
+  const db = new Database(dbPath);
+  ensurePhotoTimelineSchema(db);
+
+  const where = [];
+  const params = [];
+  if (q) {
+    const like = `%${q.replace(/%/g, "\\%").replace(/_/g, "\\_")}%`;
+    where.push(
+      `(LOWER(COALESCE(p.caption, '')) LIKE ? ESCAPE '\\' OR LOWER(COALESCE(e.title, '')) LIKE ? ESCAPE '\\' OR LOWER(COALESCE(p.src, '')) LIKE ? ESCAPE '\\' OR LOWER(COALESCE(p.thumb, '')) LIKE ? ESCAPE '\\' OR LOWER(COALESCE(p.video, '')) LIKE ? ESCAPE '\\' OR LOWER(COALESCE(e.id, '')) LIKE ? ESCAPE '\\' OR LOWER(COALESCE(p.camera_model, '')) LIKE ? ESCAPE '\\' OR LOWER(COALESCE(p.device_model, '')) LIKE ? ESCAPE '\\' OR LOWER(COALESCE(p.metadata_json, '')) LIKE ? ESCAPE '\\' OR LOWER(COALESCE(p.semantic_json, '')) LIKE ? ESCAPE '\\')`
+    );
+    params.push(like, like, like, like, like, like, like, like, like, like);
+  }
+  if (vis === "public" || vis === "private") {
+    where.push(`LOWER(COALESCE(p.visibility, 'public')) = ?`);
+    params.push(vis);
+  }
+  if (evis === "public" || evis === "private") {
+    where.push(`LOWER(COALESCE(e.visibility, 'public')) = ?`);
+    params.push(evis);
+  }
+  const whereSql = where.length ? `WHERE ${where.join(" AND ")}` : "";
+
+  const totalRow = db
+    .prepare(
+      `SELECT COUNT(*) AS c
+       FROM timeline_photos p
+       JOIN timeline_entries e ON e.id = p.entry_id
+       ${whereSql}`
+    )
+    .get(...params);
+  const total = totalRow && totalRow.c != null ? Number(totalRow.c) : 0;
+
+  const rows = db
+    .prepare(
+      `SELECT
+         p.id AS photo_id,
+         p.entry_id AS entry_id,
+         p.thumb AS thumb,
+         p.src AS src,
+         p.video AS video,
+         p.caption AS caption,
+         p.ratio AS ratio,
+         p.visibility AS photo_visibility,
+         p.sort_index AS sort_index,
+         p.captured_at AS captured_at,
+         p.camera_make AS camera_make,
+         p.camera_model AS camera_model,
+         p.lens_model AS lens_model,
+         p.device_model AS device_model,
+         p.gps_latitude AS gps_latitude,
+         p.gps_longitude AS gps_longitude,
+         p.metadata_json AS metadata_json,
+         p.semantic_json AS semantic_json,
+         e.calendar_date AS calendar_date,
+         e.date AS date,
+         e.title AS title,
+         e.place AS place,
+         e.visibility AS entry_visibility
+       FROM timeline_photos p
+       JOIN timeline_entries e ON e.id = p.entry_id
+       ${whereSql}
+       ORDER BY e.calendar_date DESC, e.id DESC, p.sort_index ASC, p.id ASC
+       LIMIT ? OFFSET ?`
+    )
+    .all(...params, limit, offset);
+
+  db.close();
+
+  const items = rows.map((r) => ({
+    photoId: r.photo_id != null ? Number(r.photo_id) : null,
+    entryId: r.entry_id != null ? String(r.entry_id) : "",
+    thumb: r.thumb != null ? String(r.thumb) : "",
+    src: r.src != null ? String(r.src) : "",
+    video: r.video != null ? String(r.video) : "",
+    caption: r.caption != null ? String(r.caption) : "",
+    ratio: r.ratio != null ? String(r.ratio) : "",
+    visibility: r.photo_visibility != null ? String(r.photo_visibility) : "public",
+    capturedAt: r.captured_at != null ? String(r.captured_at) : "",
+    cameraMake: r.camera_make != null ? String(r.camera_make) : "",
+    cameraModel: r.camera_model != null ? String(r.camera_model) : "",
+    lensModel: r.lens_model != null ? String(r.lens_model) : "",
+    deviceModel: r.device_model != null ? String(r.device_model) : "",
+    metadata: materializePhotoMetadataFromRow(r),
+    semantic: parseJsonObjectOrNull(r.semantic_json),
+    sortIndex: r.sort_index != null ? Number(r.sort_index) : 0,
+    calendarDate: r.calendar_date != null ? String(r.calendar_date) : "",
+    date: r.date != null ? String(r.date) : "",
+    title: r.title != null ? String(r.title) : "",
+    place: r.place != null ? String(r.place) : "",
+    entryVisibility: r.entry_visibility != null ? String(r.entry_visibility) : "public",
+  }));
+
+  const nextOffset = offset + items.length < total ? offset + items.length : null;
+  return { items, total, offset, limit, nextOffset };
+}
+
+/**
+ * 后台：批量更新照片可见性（并写回关联 source JSON）。
+ * @param {{ publicDir: string; serverDir: string; photoIds: (number|string)[]; visibility: string }} opts
+ */
+export function updateTimelinePhotosVisibilityBulk(opts) {
+  const { publicDir, serverDir } = opts;
+  const idsIn = Array.isArray(opts.photoIds) ? opts.photoIds : [];
+  const ids = Array.from(
+    new Set(
+      idsIn
+        .map((x) => Math.floor(Number(x)))
+        .filter((n) => Number.isFinite(n) && n > 0)
+    )
+  );
+  if (!ids.length) throw new Error("photoIds 不能为空");
+  const visibility = String(opts.visibility || "").trim().toLowerCase() === "private" ? "private" : "public";
+
+  const dbPath = path.join(serverDir, ".data", "photo-timeline.sqlite");
+  if (!fs.existsSync(dbPath)) throw new Error("database not found");
+  const db = new Database(dbPath);
+  ensurePhotoTimelineSchema(db);
+
+  const ph = ids.map(() => "?").join(",");
+  const rows = db
+    .prepare(`SELECT id, entry_id FROM timeline_photos WHERE id IN (${ph})`)
+    .all(...ids);
+  if (!rows.length) {
+    db.close();
+    throw new Error("未找到任何照片");
+  }
+
+  const tx = db.transaction(() => {
+    db.prepare(`UPDATE timeline_photos SET visibility = ? WHERE id IN (${ph})`).run(
+      visibility,
+      ...ids
+    );
+  });
+  tx();
+
+  const entryIds = Array.from(new Set(rows.map((r) => String(r.entry_id || "")).filter(Boolean)));
+  const sourceByEntry = new Map();
+  for (const eid of entryIds) {
+    const r = db.prepare(`SELECT source_path FROM timeline_entries WHERE id = ?`).get(eid);
+    sourceByEntry.set(eid, r && r.source_path != null ? String(r.source_path) : "");
+  }
+
+  const entries = [];
+  for (const eid of entryIds) {
+    const entry = readOneTimelineEntry(db, eid);
+    if (entry) entries.push({ entryId: eid, sourceRel: sourceByEntry.get(eid) || "", entry });
+  }
+  db.close();
+
+  for (const item of entries) {
+    writeEntryToSourceJsonFile(publicDir, serverDir, item.sourceRel, item.entryId, item.entry);
+  }
+  appendPhotoTimelineWriteLog(
+    serverDir,
+    `admin-batch-visibility photos=${rows.length} entries=${entryIds.length} visibility=${visibility}`
+  );
+  return { ok: true, updatedPhotos: rows.length, updatedEntries: entryIds.length, visibility };
+}
+
+/**
+ * 更新单张照片元数据。
+ * @param {{ publicDir: string; serverDir: string; entryId: string; photoId: number|string; patch: { visibility?: string; caption?: string; semantic?: Record<string, unknown> } }} opts
+ */
+export function updateTimelinePhotoMeta(opts) {
+  const { publicDir, serverDir } = opts;
+  const liveRoot = resolvePhotoTimelineLiveRoot(publicDir, serverDir);
+  const entryId = String(opts.entryId || "").trim();
+  const photoId = Math.floor(Number(opts.photoId));
+  const patch = opts.patch && typeof opts.patch === "object" ? opts.patch : {};
+  if (!entryId) throw new Error("invalid entryId");
+  if (!Number.isFinite(photoId) || photoId <= 0) throw new Error("invalid photoId");
+
+  const rawVis = patch.visibility != null ? String(patch.visibility) : "";
+  const vis = rawVis.trim().toLowerCase() === "private" ? "private" : "public";
+
+  const dbPath = path.join(serverDir, ".data", "photo-timeline.sqlite");
+  if (!fs.existsSync(dbPath)) throw new Error("database not found");
+  const db = new Database(dbPath);
+  ensurePhotoTimelineSchema(db);
+
+  const row = db.prepare(`SELECT id, source_path FROM timeline_entries WHERE id = ?`).get(entryId);
+  if (!row) {
+    db.close();
+    throw new Error("条目不存在或未入库");
+  }
+  const sourceRel = row.source_path != null ? String(row.source_path) : "";
+
+  const pRow = db
+    .prepare(`SELECT id, entry_id, caption, metadata_json, semantic_json, visibility FROM timeline_photos WHERE id = ?`)
+    .get(photoId);
+  if (!pRow || String(pRow.entry_id) !== entryId) {
+    db.close();
+    throw new Error("照片不存在或不属于该条目");
+  }
+
+  const nextCaption =
+    patch.caption !== undefined ? String(patch.caption) : pRow.caption != null ? String(pRow.caption) : "";
+  const prevSemantic = parseJsonObjectOrNull(pRow.semantic_json);
+  const nextSemantic =
+    patch.semantic !== undefined
+      ? normalizePhotoSemanticInput({ ...(prevSemantic || {}), ...(patch.semantic && typeof patch.semantic === "object" ? patch.semantic : {}) })
+      : prevSemantic;
+
+  db.prepare(`UPDATE timeline_photos SET visibility = ?, caption = ?, semantic_json = ? WHERE id = ?`).run(
+    patch.visibility !== undefined ? vis : pRow.visibility != null ? String(pRow.visibility) : "public",
+    nextCaption,
+    nextSemantic ? JSON.stringify(nextSemantic) : null,
+    photoId
+  );
+
+  const entry = readOneTimelineEntry(db, entryId);
+  db.close();
+  if (!entry) throw new Error("update failed: entry missing after save");
+
+  // 写回 source json（仅写回媒体与可见性，避免丢数据）
+  writeEntryToSourceJsonFile(publicDir, serverDir, sourceRel, entryId, entry);
+  appendPhotoTimelineWriteLog(
+    serverDir,
+    `admin-update-photo entry=${entryId} photo=${photoId} visibility=${patch.visibility !== undefined ? vis : "keep"}`
+  );
+  return entry;
+}
+
+/**
+ * 调用视觉模型为单张照片生成“地点 / 场景 / 摘要 / 通用 caption”建议。
+ * 不做人物身份识别；people 始终留给人工维护。
+ * @param {{ publicDir: string; serverDir: string; entryId: string; photoId: number|string; prompt?: string }} opts
+ */
+export async function suggestTimelinePhotoSemanticFromAI(opts) {
+  const { publicDir, serverDir } = opts;
+  const liveRoot = resolvePhotoTimelineLiveRoot(publicDir, serverDir);
+  const entryId = String(opts.entryId || "").trim();
+  const photoId = Math.floor(Number(opts.photoId));
+  if (!entryId) throw new Error("invalid entryId");
+  if (!Number.isFinite(photoId) || photoId <= 0) throw new Error("invalid photoId");
+
+  const apiKey = getOpenAIApiKey();
+  if (!apiKey) throw new Error("未配置 OPENAI_API_KEY");
+  const model = getPhotoTimelineVisionModel();
+  if (!model) throw new Error("未配置 PHOTO_TIMELINE_VISION_MODEL");
+
+  const dbPath = path.join(serverDir, ".data", "photo-timeline.sqlite");
+  if (!fs.existsSync(dbPath)) throw new Error("database not found");
+  const db = new Database(dbPath);
+  ensurePhotoTimelineSchema(db);
+
+  const row = db
+    .prepare(
+      `SELECT
+         p.id AS photo_id,
+         p.entry_id AS entry_id,
+         p.thumb AS thumb,
+         p.src AS src,
+         p.video AS video,
+         p.caption AS caption,
+         p.metadata_json AS metadata_json,
+         p.semantic_json AS semantic_json,
+         e.title AS entry_title,
+         e.place AS entry_place,
+         e.date AS entry_date,
+         e.calendar_date AS calendar_date,
+         e.note AS entry_note
+       FROM timeline_photos p
+       JOIN timeline_entries e ON e.id = p.entry_id
+       WHERE p.id = ?`
+    )
+    .get(photoId);
+  db.close();
+
+  if (!row || String(row.entry_id) !== entryId) throw new Error("照片不存在或不属于该条目");
+  const asset = pickPhotoAnalysisAsset(publicDir, liveRoot, row);
+  const fileBase64 = fs.readFileSync(asset.absPath).toString("base64");
+  const imageUrl = `data:${asset.mimeType};base64,${fileBase64}`;
+  const metadata = materializePhotoMetadataFromRow(row);
+  const semantic = parseJsonObjectOrNull(row.semantic_json);
+
+  const promptOverride = String(opts.prompt || "").trim() || getPhotoTimelineVisionPromptOverride();
+  const instruction =
+    promptOverride ||
+    [
+      "请分析这张照片，并生成适合照片时间轴管理后台使用的结构化建议。",
+      "只根据可见内容与给定上下文回答，不要编造无法确认的细节。",
+      "禁止识别人脸身份、禁止猜测真实姓名，因此 people 必须返回空数组。",
+      "优先输出：更自然的 caption、地点名称建议、地点分类、场景主类、场景标签、简短摘要、需要人工复核的备注。",
+      "如果无法确认地点，就保持 place_name 为空字符串；如果场景不明确，也保持简洁。",
+    ].join("\n");
+
+  const userContext = {
+    entry: {
+      title: row.entry_title != null ? String(row.entry_title) : "",
+      place: row.entry_place != null ? String(row.entry_place) : "",
+      date: row.calendar_date != null ? String(row.calendar_date) : row.entry_date != null ? String(row.entry_date) : "",
+      note: row.entry_note != null ? String(row.entry_note) : "",
+    },
+    photo: {
+      caption: row.caption != null ? String(row.caption) : "",
+      metadata,
+      semantic,
+      asset_path: asset.relPath,
+    },
+  };
+
+  const reqBody = {
+    model,
+    input: [
+      {
+        role: "system",
+        content: [{ type: "input_text", text: instruction }],
+      },
+      {
+        role: "user",
+        content: [
+          {
+            type: "input_text",
+            text:
+              "请根据这张照片和上下文生成结构化 JSON 建议。\n上下文：\n" +
+              JSON.stringify(userContext, null, 2),
+          },
+          {
+            type: "input_image",
+            image_url: imageUrl,
+            detail: "high",
+          },
+        ],
+      },
+    ],
+    text: {
+      format: {
+        type: "json_schema",
+        name: "photo_timeline_semantic_suggestion",
+        strict: true,
+        schema: {
+          type: "object",
+          additionalProperties: false,
+          properties: {
+            caption: { type: "string" },
+            semantic: {
+              type: "object",
+              additionalProperties: false,
+              properties: {
+                people: { type: "array", items: { type: "string" } },
+                place_name: { type: "string" },
+                place_category: { type: "string" },
+                scene: { type: "string" },
+                scene_tags: { type: "array", items: { type: "string" } },
+                summary: { type: "string" },
+                source: { type: "string" },
+                notes: { type: "string" },
+              },
+              required: [
+                "people",
+                "place_name",
+                "place_category",
+                "scene",
+                "scene_tags",
+                "summary",
+                "source",
+                "notes",
+              ],
+            },
+          },
+          required: ["caption", "semantic"],
+        },
+      },
+    },
+  };
+
+  const response = await fetch(`${getOpenAIBaseUrl()}/responses`, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${apiKey}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify(reqBody),
+  });
+  const payload = await response.json().catch(() => ({}));
+  if (!response.ok) {
+    const msg =
+      payload && payload.error && payload.error.message
+        ? String(payload.error.message)
+        : response.statusText || `HTTP ${response.status}`;
+    throw new Error(`AI 分析失败：${msg}`);
+  }
+
+  const text = extractOpenAIResponseText(payload);
+  if (!text) throw new Error("AI 未返回可解析的结果");
+
+  let suggestion;
+  try {
+    suggestion = JSON.parse(text);
+  } catch {
+    throw new Error("AI 返回结果不是合法 JSON");
+  }
+
+  const nextSemantic = normalizePhotoSemanticInput({
+    ...(suggestion && suggestion.semantic && typeof suggestion.semantic === "object" ? suggestion.semantic : {}),
+    people: [],
+    source: `ai:${model}`,
+  }) || {
+    people: [],
+    place_name: "",
+    place_category: "",
+    scene: "",
+    scene_tags: [],
+    summary: "",
+    source: `ai:${model}`,
+    notes: "",
+  };
+
+  return {
+    entryId,
+    photoId,
+    model,
+    assetPath: asset.relPath,
+    caption: suggestion && suggestion.caption != null ? String(suggestion.caption).trim() : "",
+    semantic: nextSemantic,
+  };
 }
 
 function sanitizeAmapKey(raw) {
@@ -2011,7 +2959,7 @@ export function patchTimelineEntryOnDisk(opts) {
   if (!entry) {
     throw new Error("patch failed: entry missing after update");
   }
-  writeEntryToSourceJsonFile(publicDir, sourceRel, currentId, entry);
+  writeEntryToSourceJsonFile(publicDir, serverDir, sourceRel, currentId, entry);
   return entry;
 }
 
@@ -2292,8 +3240,11 @@ export function updateTimelineEntryMeta(opts) {
     patch.note !== undefined ||
     patch.tags !== undefined ||
     patch.date !== undefined ||
-    patch.gps !== undefined;
-  if (!has) throw new Error("patch must include title, place, note, tags, date, or gps");
+    patch.gps !== undefined ||
+    patch.visibility !== undefined;
+  if (!has) {
+    throw new Error("patch must include title, place, note, tags, date, gps, or visibility");
+  }
 
   const dbPath = path.join(serverDir, ".data", "photo-timeline.sqlite");
   if (!fs.existsSync(dbPath)) throw new Error("database not found");
@@ -2302,7 +3253,7 @@ export function updateTimelineEntryMeta(opts) {
   let currentId = String(id);
   const row = db
     .prepare(
-      `SELECT id, date, title, place, note, data_version, source_path FROM timeline_entries WHERE id = ?`
+      `SELECT id, date, title, place, note, visibility, data_version, source_path FROM timeline_entries WHERE id = ?`
     )
     .get(currentId);
   if (!row) {
@@ -2313,6 +3264,14 @@ export function updateTimelineEntryMeta(opts) {
   const title = patch.title !== undefined ? String(patch.title) : row.title != null ? String(row.title) : "";
   const place = patch.place !== undefined ? String(patch.place) : row.place != null ? String(row.place) : "";
   const note = patch.note !== undefined ? String(patch.note) : row.note != null ? String(row.note) : "";
+  const visibility =
+    patch.visibility !== undefined
+      ? String(patch.visibility).trim().toLowerCase() === "private"
+        ? "private"
+        : "public"
+      : row.visibility != null && String(row.visibility).trim().toLowerCase() === "private"
+        ? "private"
+        : "public";
   const date = patch.date !== undefined ? String(patch.date) : String(row.date);
   if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) {
     db.close();
@@ -2339,8 +3298,8 @@ export function updateTimelineEntryMeta(opts) {
 
   const run = db.transaction(() => {
     db.prepare(
-      `UPDATE timeline_entries SET title = ?, place = ?, note = ?, date = ?, calendar_date = ?, updated_at = ? WHERE id = ?`
-    ).run(title, place, note, date, calendarDate, now, currentId);
+      `UPDATE timeline_entries SET title = ?, place = ?, note = ?, visibility = ?, date = ?, calendar_date = ?, updated_at = ? WHERE id = ?`
+    ).run(title, place, note, visibility, date, calendarDate, now, currentId);
 
     if (patch.tags !== undefined) {
       delTags.run(currentId);
@@ -2449,7 +3408,7 @@ export function updateTimelineEntryMeta(opts) {
   const sourceRel = row.source_path != null ? String(row.source_path) : "";
   db.close();
   if (!entry) throw new Error("update failed: entry missing after save");
-  writeEntryToSourceJsonFile(publicDir, sourceRel, currentId, entry);
+  writeEntryToSourceJsonFile(publicDir, serverDir, sourceRel, currentId, entry);
   return entry;
 }
 
@@ -2459,6 +3418,7 @@ export function updateTimelineEntryMeta(opts) {
  */
 export function deleteTimelineEntry(opts) {
   const { publicDir, serverDir, id } = opts;
+  const liveRoot = resolvePhotoTimelineLiveRoot(publicDir, serverDir);
   const entryId = String(id || "").trim();
   if (!entryId) throw new Error("invalid id");
 
@@ -2484,12 +3444,12 @@ export function deleteTimelineEntry(opts) {
   db.close();
 
   for (const p of photos) {
-    tryUnlinkPublicMedia(publicDir, p && p.video);
-    tryUnlinkPublicMedia(publicDir, p && p.src);
-    tryUnlinkPublicMedia(publicDir, p && p.thumb);
+    tryUnlinkSiteMedia(publicDir, liveRoot, p && p.video);
+    tryUnlinkSiteMedia(publicDir, liveRoot, p && p.src);
+    tryUnlinkSiteMedia(publicDir, liveRoot, p && p.thumb);
   }
 
-  removeEntryFromSourceJsonFiles(publicDir, entryId, sourceRel);
+  removeEntryFromSourceJsonFiles(publicDir, liveRoot, entryId, sourceRel);
   appendPhotoTimelineWriteLog(serverDir, `admin-delete-entry id=${entryId}`);
   return { ok: true, id: entryId };
 }
@@ -2500,6 +3460,7 @@ export function deleteTimelineEntry(opts) {
  */
 export function deleteTimelinePhoto(opts) {
   const { publicDir, serverDir } = opts;
+  const liveRoot = resolvePhotoTimelineLiveRoot(publicDir, serverDir);
   const entryId = String(opts.entryId || "").trim();
   const photoId = Math.floor(Number(opts.photoId));
   if (!entryId) throw new Error("invalid entryId");
@@ -2529,11 +3490,11 @@ export function deleteTimelinePhoto(opts) {
   renumberTimelinePhotos(db, entryId);
   db.close();
 
-  tryUnlinkPublicMedia(publicDir, pRow.video);
-  tryUnlinkPublicMedia(publicDir, pRow.src);
-  tryUnlinkPublicMedia(publicDir, pRow.thumb);
+  tryUnlinkSiteMedia(publicDir, liveRoot, pRow.video);
+  tryUnlinkSiteMedia(publicDir, liveRoot, pRow.src);
+  tryUnlinkSiteMedia(publicDir, liveRoot, pRow.thumb);
 
-  removePhotoFromSourceJsonFiles(publicDir, entryId, pRow, sourceRel);
+  removePhotoFromSourceJsonFiles(publicDir, liveRoot, entryId, pRow, sourceRel);
   appendPhotoTimelineWriteLog(serverDir, `admin-delete-photo entry=${entryId} photo=${photoId}`);
   return { ok: true, entryId, photoId };
 }
@@ -2557,6 +3518,7 @@ function ensureAdminManualEntryJson(publicDir, serverDir) {
  */
 export function createTimelineEntryFromAdmin(opts) {
   const { publicDir, serverDir } = opts;
+  const liveRoot = resolvePhotoTimelineLiveRoot(publicDir, serverDir);
   const input = opts.input && typeof opts.input === "object" ? opts.input : {};
   const dateRaw = input.date != null ? String(input.date).trim() : "";
   if (!/^\d{4}-\d{2}-\d{2}$/.test(dateRaw)) {
@@ -2567,6 +3529,14 @@ export function createTimelineEntryFromAdmin(opts) {
   const place = input.place != null ? String(input.place) : "";
   const note = input.note != null ? String(input.note) : "";
   const tags = Array.isArray(input.tags) ? input.tags.map((t) => String(t).trim()).filter(Boolean) : [];
+  const visibility =
+    input.visibility != null
+      ? String(input.visibility).trim().toLowerCase() === "private"
+        ? "private"
+        : "public"
+      : input.private === true || input.private === 1
+        ? "private"
+        : "public";
 
   let gpsObj = {};
   if (input.gps != null && typeof input.gps === "object") {
@@ -2610,32 +3580,166 @@ export function createTimelineEntryFromAdmin(opts) {
   const photos = [];
   for (const p of photosIn) {
     if (!p || typeof p !== "object") continue;
-    const thumb = p.thumb != null ? String(p.thumb).trim() : "";
-    const src = p.src != null ? String(p.src).trim() : "";
-    const video = p.video != null ? String(p.video).trim() : "";
+    const pickString = (keys) => {
+      for (const k of keys) {
+        if (p[k] == null) continue;
+        const s = String(p[k]).trim();
+        if (s) return s;
+      }
+      return "";
+    };
+    const livpRel = pickString(["livp"]);
+    const isVideoPath = (rel) => /\.(mov|mp4|webm|m4v)$/i.test(String(rel || ""));
+
     const caption = p.caption != null ? String(p.caption) : "";
     const ratio = p.ratio != null ? String(p.ratio) : "";
+    const metadata = p.metadata && typeof p.metadata === "object" ? p.metadata : null;
+    const semantic = p.semantic && typeof p.semantic === "object" ? p.semantic : null;
+
+    if (livpRel) {
+      // livp：调用 tool/livp_extractor.py 生成 thumb/preview/mov（并把生成的 JSON 删除，避免重复导入）
+      if (!/\.livp$/i.test(livpRel)) throw new Error("livp 需为 .livp 文件路径");
+
+      const livpAbs = resolveVerifiedSiteFilePath(publicDir, liveRoot, livpRel);
+      if (!fs.existsSync(livpAbs)) throw new Error("livp 文件不存在: " + livpRel);
+
+      const runId = `livp_${Date.now()}_${crypto.randomBytes(3).toString("hex")}`;
+      const importAbsRoot = path.join(liveRoot, "_admin-import", runId);
+      const importWebPrefix = `assets/live/_admin-import/${runId}`;
+      const toolScript = path.join(serverDir, "..", "tool", "livp_extractor.py");
+      if (!fs.existsSync(toolScript)) throw new Error("未找到工具脚本: " + toolScript);
+
+      if (!fs.existsSync(path.dirname(importAbsRoot))) {
+        fs.mkdirSync(path.dirname(importAbsRoot), { recursive: true });
+      }
+
+      const r = spawnSync(
+        "python3",
+        [
+          toolScript,
+          "-i",
+          livpAbs,
+          "-o",
+          importAbsRoot,
+          "--web-prefix",
+          importWebPrefix,
+          "--no-db-sync",
+          "--on-conflict",
+          "unique",
+        ],
+        { encoding: "utf8" }
+      );
+      if (r.error) {
+        throw new Error(
+          "livp 处理失败（无法运行 python3）： " +
+            String(r.error && r.error.message ? r.error.message : r.error)
+        );
+      }
+      if (r.status !== 0) {
+        const out = String(r.stdout || "").trim();
+        const err = String(r.stderr || "").trim();
+        throw new Error(
+          "livp 处理失败（exit=" +
+            String(r.status) +
+            "）。请确保已安装工具依赖（tool/requirements.txt）。\n" +
+            (err || out || "(no output)")
+        );
+      }
+
+      // 读取工具生成的 photo-timeline-entry.json，从中提取 photos；随后删除该文件避免被 sync 扫到重复入库
+      const createdJsonFiles = [];
+      (function walk(dir) {
+        let ents = [];
+        try {
+          ents = fs.readdirSync(dir, { withFileTypes: true });
+        } catch {
+          return;
+        }
+        for (const ent of ents) {
+          const full = path.join(dir, ent.name);
+          if (ent.isDirectory()) walk(full);
+          else if (ent.name === "photo-timeline-entry.json") createdJsonFiles.push(full);
+        }
+      })(importAbsRoot);
+
+      if (!createdJsonFiles.length) throw new Error("livp 处理完成，但未生成 photo-timeline-entry.json");
+      const jsonPath = createdJsonFiles[0];
+      let toolJson;
+      try {
+        toolJson = JSON.parse(fs.readFileSync(jsonPath, "utf8"));
+      } catch (e) {
+        throw new Error("livp 处理完成，但 JSON 读取失败: " + String(e && e.message));
+      }
+      const toolEntries = Array.isArray(toolJson.entries) ? toolJson.entries : [];
+      const toolPhotos =
+        toolEntries.length && Array.isArray(toolEntries[0].photos) ? toolEntries[0].photos : [];
+      if (!toolPhotos.length) throw new Error("livp 处理完成，但未生成可用的 photos");
+
+      try {
+        fs.unlinkSync(jsonPath);
+      } catch {
+        // ignore
+      }
+
+      for (const tp of toolPhotos) {
+        if (!tp || typeof tp !== "object") continue;
+        const thumbIn = tp.thumb != null ? String(tp.thumb).trim() : "";
+        const srcIn = tp.src != null ? String(tp.src).trim() : "";
+        const videoIn = tp.video != null ? String(tp.video).trim() : "";
+
+        let thumbOut = thumbIn;
+        let srcOut = srcIn;
+        let videoOut = videoIn;
+        if (!srcOut && thumbOut) srcOut = thumbOut;
+        if (!thumbOut && srcOut) thumbOut = srcOut;
+        if (!videoOut) {
+          if (srcOut && isVideoPath(srcOut)) videoOut = srcOut;
+          else if (thumbOut && isVideoPath(thumbOut)) videoOut = thumbOut;
+        }
+
+        // 校验路径只允许落在 public 或 /assets/live 映射目录
+        const rels = [thumbOut, srcOut, videoOut].filter(Boolean);
+        for (const rel of rels) {
+          resolveVerifiedSiteFilePath(publicDir, liveRoot, rel);
+        }
+
+        photos.push({
+          thumb: thumbOut || null,
+          src: srcOut || null,
+          video: videoOut || null,
+          caption: tp.caption != null ? String(tp.caption) : caption,
+          ratio: tp.ratio != null ? String(tp.ratio) : ratio || null,
+          metadata: tp.metadata && typeof tp.metadata === "object" ? tp.metadata : metadata,
+          semantic: tp.semantic && typeof tp.semantic === "object" ? tp.semantic : semantic,
+        });
+      }
+
+      continue;
+    }
+
+    const thumb = pickString(["thumb", "thum"]);
+    const src = pickString(["src", "preview"]);
+    const video = pickString(["video", "mov"]);
     if (!thumb && !src && !video) continue;
 
-    const isVideoPath = (rel) => /\.(mov|mp4|webm|m4v)$/i.test(String(rel || ""));
     let thumbOut = thumb;
     let srcOut = src;
     let videoOut = video;
 
-    // 允许只传一个：缺 thumb 默认用 src；缺 src 默认用 thumb
+    // 允许只传一个：缺 thumb 默认用 preview（src）；缺 preview 默认用 thumb
     if (!srcOut && thumbOut) srcOut = thumbOut;
     if (!thumbOut && srcOut) thumbOut = srcOut;
 
-    // mov 不传默认与 preview（src）一致；若 preview 不是视频，则尝试与 thumb 对齐
+    // mov 不传默认与 preview（src）一致（仅当 preview/thumbnail 本身是视频路径时）
     if (!videoOut) {
       if (srcOut && isVideoPath(srcOut)) videoOut = srcOut;
       else if (thumbOut && isVideoPath(thumbOut)) videoOut = thumbOut;
     }
 
-    // 校验路径都在 public 下（防止写入奇怪字段）
+    // 校验路径只允许落在 public 或 /assets/live 映射目录
     const rels = [thumbOut, srcOut, videoOut].filter(Boolean);
     for (const rel of rels) {
-      resolveVerifiedPublicFilePath(publicDir, rel);
+      resolveVerifiedSiteFilePath(publicDir, liveRoot, rel);
     }
 
     photos.push({
@@ -2644,6 +3748,8 @@ export function createTimelineEntryFromAdmin(opts) {
       video: videoOut || null,
       caption,
       ratio: ratio || null,
+      metadata,
+      semantic,
     });
   }
 
@@ -2652,10 +3758,14 @@ export function createTimelineEntryFromAdmin(opts) {
     title,
     place,
     note,
+    visibility,
     tags,
     gps: gpsObj,
     photos,
   };
+  if (!photos.length) {
+    throw new Error("photos 不能为空：需至少上传 1 张（thumb/preview 或 livp）");
+  }
 
   const { sourceRel } = ensureAdminManualEntryJson(publicDir, serverDir);
   const dbPath = path.join(serverDir, ".data", "photo-timeline.sqlite");
@@ -2677,7 +3787,7 @@ export function createTimelineEntryFromAdmin(opts) {
   db.close();
   if (!saved) throw new Error("create failed: entry missing after upsert");
 
-  writeEntryToSourceJsonFile(publicDir, sourceRel, id, saved);
+  writeEntryToSourceJsonFile(publicDir, serverDir, sourceRel, id, saved);
   appendPhotoTimelineWriteLog(serverDir, `admin-create-entry id=${id}`);
   return saved;
 }
@@ -2748,6 +3858,25 @@ export function registerPhotoTimelineRoutes(app, opts) {
   const rootDir = opts.rootDir;
   const liveRoot = resolvePhotoTimelineLiveRoot(publicDir, serverDir);
 
+  app.get("/api/photo-timeline/session", function (req, res) {
+    const hasSecret = !!getUserSecret();
+    const loggedIn = isUserLoggedIn(req);
+    res.json({ ok: true, hasSecret, loggedIn });
+  });
+
+  app.post("/api/photo-timeline/login", function (req, res) {
+    const body = req.body && typeof req.body === "object" ? req.body : {};
+    const token = body.token != null ? String(body.token) : "";
+    if (!assertUserLoginToken(req, res, token)) return;
+    issueUserSessionCookie(req, res);
+    res.json({ ok: true });
+  });
+
+  app.post("/api/photo-timeline/logout", function (req, res) {
+    clearUserSessionCookie(req, res);
+    res.json({ ok: true });
+  });
+
   app.post("/api/photo-timeline/sync", function (req, res) {
     if (!assertPhotoTimelineSyncAuth(req, res)) {
       appendPhotoTimelineWriteLog(
@@ -2782,6 +3911,7 @@ export function registerPhotoTimelineRoutes(app, opts) {
     try {
       const sort = String(req.query.sort || "desc").toLowerCase();
       const sortDesc = sort !== "asc";
+      const allowPrivate = isUserLoggedIn(req);
       const offset = Math.max(0, Math.floor(Number(req.query.offset) || 0));
       const limit = Math.max(1, Math.min(1000, Math.floor(Number(req.query.limit) || 5)));
       const tagValues = Array.isArray(req.query.tag)
@@ -2798,6 +3928,12 @@ export function registerPhotoTimelineRoutes(app, opts) {
         tags: tagValues,
         anchorDate: req.query.anchorDate,
       });
+      page.entries = Array.isArray(page.entries)
+        ? page.entries
+            .filter((e) => isEntryVisibleForViewer(e, allowPrivate))
+            .map((e) => filterEntryPhotosByVisibility(e, allowPrivate))
+            .filter((e) => Array.isArray(e.photos) && e.photos.length > 0)
+        : [];
       res.json({
         version: "2",
         pageSize: limit,
@@ -2838,7 +3974,8 @@ export function registerPhotoTimelineRoutes(app, opts) {
     try {
       const sort = String(req.query.sort || "desc").toLowerCase();
       const sortDesc = sort !== "asc";
-      const result = readTimelineMapPoints({ serverDir, sortDesc });
+      const allowPrivate = isUserLoggedIn(req);
+      const result = readTimelineMapPoints({ serverDir, sortDesc, allowPrivate });
       res.json({
         ok: true,
         total: result.total,
