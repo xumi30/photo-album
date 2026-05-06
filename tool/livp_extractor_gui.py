@@ -26,6 +26,7 @@ import livp_extractor as core
 
 _REPO_ROOT = Path(__file__).resolve().parent.parent
 _DEFAULT_PUBLIC_LIVE = _REPO_ROOT / "public" / "assets" / "live"
+_EXTERNAL_LIVE_LINK = "_livp-external"
 
 # ---------------------------------------------------------------------------
 # State shared between the HTTP handler and the extraction thread
@@ -153,16 +154,105 @@ def is_file_already_processed(file_path: str, output_dir: str) -> bool:
         with state_lock:
             if file_path in state["processed_files"]:
                 return True
-        
-        # 检查输出目录中是否已存在处理结果
-        file_name = Path(file_path).stem
-        heic_path = Path(output_dir) / f"{file_name}.heic"
-        mov_path = Path(output_dir) / f"{file_name}.mov"
-        
-        return heic_path.exists() and mov_path.exists()
+
+        # 与 core._is_file_already_processed 保持一致：
+        # 以“输出目录中存在包含 livp 文件名的子目录，并且子目录内有 metadata.json”为已处理标志。
+        livp_name = Path(file_path).stem
+        out_root = Path(output_dir)
+        if not out_root.exists():
+            return False
+
+        for existing_dir in out_root.iterdir():
+            if not existing_dir.is_dir():
+                continue
+            if livp_name in existing_dir.name:
+                if (existing_dir / "metadata.json").exists():
+                    return True
+        return False
     except Exception as e:
         logging.warning(f"检查文件是否已处理失败: {file_path} - {e}")
         return False
+
+
+def _is_subpath(path: Path, parent: Path) -> bool:
+    try:
+        path.resolve().relative_to(parent.resolve())
+        return True
+    except Exception:
+        return False
+
+
+def _ensure_live_symlink_for_external_output(output_dir: Path, logger: logging.Logger) -> Optional[str]:
+    """
+    外部输出目录场景：在 public/assets/live 下创建软链接，前端通过 /assets/live/<link>/... 访问。
+    返回 web_prefix 覆盖值（如 assets/live/_livp-external）或 None（不需要覆盖）。
+    """
+    if _is_subpath(output_dir, _DEFAULT_PUBLIC_LIVE):
+        return None
+
+    _DEFAULT_PUBLIC_LIVE.mkdir(parents=True, exist_ok=True)
+    link_path = _DEFAULT_PUBLIC_LIVE / _EXTERNAL_LIVE_LINK
+    try:
+        if link_path.exists() or link_path.is_symlink():
+            if link_path.is_symlink() or link_path.is_file():
+                link_path.unlink()
+            else:
+                logger.warning("软链接目标路径已存在且不是文件/软链接: %s", link_path)
+                return None
+        os.symlink(str(output_dir), str(link_path))
+        logger.info("已创建软链接: %s -> %s", link_path, output_dir)
+        return f"assets/live/{_EXTERNAL_LIVE_LINK}"
+    except Exception as exc:
+        logger.warning("创建软链接失败，保持原 web_prefix: %s", exc)
+        return None
+
+
+def _suggest_output_dir_for_scan_folder(folder_path: str) -> str:
+    """
+    扫描目录平级创建输出目录:
+    /a/b/input -> /a/b/input_livp_output
+    """
+    p = Path(folder_path).resolve()
+    return str((p.parent / f"{p.name}_livp_output").resolve())
+
+
+def _cleanup_extracted_heic_files(result: dict, logger: logging.Logger) -> int:
+    """
+    GUI 侧策略：提取完成后不保留 .heic/.heif 文件。
+    仍会保留 thumb/preview JPEG、MOV、metadata.json、photo-timeline-entry.json 等产物。
+    返回删除的 HEIC/HEIF 文件数量。
+    """
+    deleted = 0
+    out_dir = result.get("output_directory")
+    if not out_dir:
+        return 0
+
+    # 优先使用 result 里记录的具体文件路径
+    extracted = (result.get("extracted_files") or {}).get("heic") or []
+    for p in extracted:
+        try:
+            path = Path(p)
+            if path.suffix.lower() in (".heic", ".heif") and path.exists():
+                path.unlink()
+                deleted += 1
+        except Exception as exc:
+            logger.debug("删除 HEIC 失败 %s: %s", p, exc)
+
+    # 兜底：扫描目录，删掉残留的 .heic/.heif
+    try:
+        for p in Path(out_dir).rglob("*"):
+            if p.is_file() and p.suffix.lower() in (".heic", ".heif"):
+                try:
+                    p.unlink()
+                    deleted += 1
+                except Exception as exc:
+                    logger.debug("删除残留 HEIC 失败 %s: %s", p, exc)
+    except Exception as exc:
+        logger.debug("扫描输出目录以清理 HEIC 失败 %s: %s", out_dir, exc)
+
+    if deleted:
+        logger.info("🧹 已清理 HEIC/HEIF 文件: %s 个（不保存原始 HEIC）", deleted)
+    return deleted
 
 
 def get_timeline_sync_secret_for_proxy() -> str:
@@ -229,6 +319,8 @@ def run_extraction(
     web_asset_prefix: str = "assets/live",
     export_timeline_jpeg: bool = True,
     skip_processed: bool = True,
+    sync_live_root: Optional[str] = None,
+    repo_root_hint: Optional[str] = None,
 ):
     # 初始化变量，避免作用域问题
     success = 0
@@ -326,6 +418,9 @@ def run_extraction(
         processed_files = []
         for result in results:
             if result:
+                # 提取完成后：不保存 HEIC/HEIF（删除原始图片文件，仅保留 JPEG 预览/缩略图、MOV、JSON 等）
+                heic_deleted = _cleanup_extracted_heic_files(result, logger)
+
                 gps = "—"
                 for m in result.get("heic_metadata", []):
                     lat, lon = m.get("gps_latitude"), m.get("gps_longitude")
@@ -346,13 +441,20 @@ def run_extraction(
                     state["results"].append({
                         "file": result["source_file"],
                         "date": result["capture_date"],
-                        "heic": result["heic_count"],
+                        # 不保留 HEIC 文件时，这里显示 0（原始 HEIC 已删除）
+                        "heic": 0,
                         "mov": result["mov_count"],
                         "gps": gps,
                         "entry_id": (ent or {}).get("id", "—"),
                         "timeline": "✓" if ent else "—",
                     })
-                logger.info(f"✓ 成功处理: {Path(result['source_file']).name} (HEIC: {result['heic_count']}, MOV: {result['mov_count']})")
+                logger.info(
+                    "✓ 成功处理: %s (HEIC: %s -> 已删除 %s, MOV: %s)",
+                    Path(result["source_file"]).name,
+                    result.get("heic_count", 0),
+                    heic_deleted,
+                    result.get("mov_count", 0),
+                )
         
         # 更新已处理的文件记录
         if processed_files:
@@ -386,7 +488,12 @@ def run_extraction(
     if not cancelled and success > 0:
         logger.info("尝试同步到SQLite数据库...")
         try:
-            core.maybe_sync_photo_timeline_db(output_dir, logger)
+            core.maybe_sync_photo_timeline_db(
+                output_dir,
+                logger,
+                repo_root_hint=repo_root_hint,
+                live_root=sync_live_root,
+            )
             logger.info("数据库同步完成")
         except Exception as exc:
             logger.warning(f"数据库同步异常: {exc}", exc_info=True)
@@ -688,7 +795,7 @@ HTML_PAGE = r"""<!DOCTYPE html>
   <div class="row">
     <input id="webPrefix" class="text" type="text" spellcheck="false" value="assets/live" placeholder="assets/live">
   </div>
-  <div class="hint-line" id="prefixHint">assets/live</div>
+<div class="hint-line" id="prefixHint">assets/live</div>.
   <div class="check-row">
     <input type="checkbox" id="exportJpeg" checked>
     <label for="exportJpeg">生成 JPEG 缩略图（thumb）与预览图（preview），Chrome 等浏览器可正常显示列表</label>
@@ -817,6 +924,9 @@ async function scanFolder() {
 
     const data = await resp.json();
     livpFiles.clear();
+    if (data.output_dir) {
+      document.getElementById('outputDir').value = data.output_dir;
+    }
 
     if (data.files && data.files.length > 0) {
       data.files.forEach(file => {
@@ -1153,10 +1263,10 @@ class Handler(BaseHTTPRequestHandler):
                 self._respond(400, "application/json", f'{{"error":"文件夹不存在: {folder_path}"}}')
                 return
 
-            # 如果output_dir为空，使用默认输出目录
-            if not output_dir:
-                output_dir = state.get("output_dir", str(_DEFAULT_PUBLIC_LIVE))
-                logging.info(f"使用默认输出目录: {output_dir}")
+            # 扫描时始终按扫描目录重算平级输出目录，并回填到页面。
+            # 这样不会被输入框里旧值（如 public/assets/live）阻断。
+            output_dir = _suggest_output_dir_for_scan_folder(folder_path)
+            logging.info(f"扫描自动输出目录(平级): {output_dir}")
 
             # 扫描文件夹中的所有.livp文件
             all_files = []
@@ -1185,10 +1295,12 @@ class Handler(BaseHTTPRequestHandler):
                 # 设置当前会话的文件列表
                 with state_lock:
                     state["current_session_files"] = set(valid_files)
+                    state["output_dir"] = output_dir
                 
                 # 返回文件列表
                 response_data = {
                     "folder_path": folder_path,
+                    "output_dir": output_dir,
                     "count": len(valid_files),
                     "files": valid_files,
                     "total_found": len(all_files),
@@ -1292,6 +1404,12 @@ class Handler(BaseHTTPRequestHandler):
         export_jpeg = data.get("export_timeline_jpeg", True)
         skip_processed = data.get("skip_processed", True)
 
+        # 不保存 HEIC/HEIF 的前提下，必须确保生成 preview/thumb JPEG，
+        # 否则 photo-timeline JSON 可能回退引用 HEIC 文件导致前端无法展示。
+        if not export_jpeg:
+            logging.info("检测到 export_timeline_jpeg=false，但已启用「不保存 HEIC」策略，将强制改为 true")
+            export_jpeg = True
+
         if not file_paths:
             self._respond(400, "application/json", '{"error":"no files"}')
             return
@@ -1314,6 +1432,13 @@ class Handler(BaseHTTPRequestHandler):
         if not os.path.isabs(output_dir):
             output_dir = os.path.join(os.path.expanduser("~"), "Desktop", output_dir)
         output_dir = os.path.abspath(output_dir)
+        output_path = Path(output_dir)
+
+        # 外部目录自动软链接到 public/assets/live，避免移动媒体文件。
+        live_prefix_override = _ensure_live_symlink_for_external_output(output_path, logging.getLogger("livp_extractor"))
+        if live_prefix_override:
+            web_prefix = live_prefix_override
+            logging.info("检测到外部输出目录，已切换 web_prefix -> %s", web_prefix)
 
         with state_lock:
             state["output_dir"] = output_dir
@@ -1332,6 +1457,8 @@ class Handler(BaseHTTPRequestHandler):
                 web_prefix,
                 export_jpeg,
                 skip_processed,
+                output_dir,
+                str(_REPO_ROOT),
             ),
             daemon=True,
         )
@@ -1349,6 +1476,8 @@ class Handler(BaseHTTPRequestHandler):
         web_asset_prefix,
         export_timeline_jpeg,
         skip_processed,
+        sync_live_root,
+        repo_root_hint,
     ):
         logger = logging.getLogger("livp_extractor")
         
@@ -1364,6 +1493,8 @@ class Handler(BaseHTTPRequestHandler):
                 web_asset_prefix=web_asset_prefix,
                 export_timeline_jpeg=export_timeline_jpeg,
                 skip_processed=skip_processed,
+                sync_live_root=sync_live_root,
+                repo_root_hint=repo_root_hint,
             )
             
             logger.info("提取线程正常完成")

@@ -9,9 +9,10 @@ import { fileURLToPath } from "node:url";
 import Database from "better-sqlite3";
 import { getWriteSecret } from "./admin-auth.js";
 import {
-  assertUserLoginToken,
+  assertUserLogin,
   clearUserSessionCookie,
-  getUserSecret,
+  getUserAuthConfig,
+  getUserSessionTtlSec,
   isUserLoggedIn,
   issueUserSessionCookie,
 } from "./user-auth.js";
@@ -20,6 +21,7 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PHOTO_TIMELINE_SCHEMA_PATH = path.join(__dirname, "schema", "photo-timeline-3nf.sql");
 
 const SYNC_HEADER = "x-photo-timeline-sync-secret";
+const GUEST_VISIBLE_PHOTO_LIMIT = 30;
 
 function resolvePhotoTimelineLiveRoot(publicDir, serverDir) {
   const raw = String(process.env.PHOTO_TIMELINE_LIVE_ROOT || "").trim();
@@ -2116,7 +2118,7 @@ export function readTimelineMapPoints(opts) {
   const maps = loadChildMapsForEntryIds(db, ids);
   db.close();
 
-  const points = mainRows
+  let points = mainRows
     .map((row) => assembleClientEntry(row, maps))
     .map((entry) => {
       const coords = _readGpsCoords(entry.gps);
@@ -2157,6 +2159,10 @@ export function readTimelineMapPoints(opts) {
     })
     .filter(Boolean);
 
+  if (!allowPrivate && points.length > GUEST_VISIBLE_PHOTO_LIMIT) {
+    points = points.slice(0, GUEST_VISIBLE_PHOTO_LIMIT);
+  }
+
   return { points, total: points.length };
 }
 
@@ -2170,6 +2176,46 @@ function filterEntryPhotosByVisibility(entry, allowPrivate) {
     return allowPrivate;
   });
   return entry;
+}
+
+function cloneEntryWithVisiblePhotos(entry, allowPrivate) {
+  if (!entry || typeof entry !== "object") return null;
+  const next = { ...entry };
+  return filterEntryPhotosByVisibility(next, allowPrivate);
+}
+
+function limitEntriesToPhotoCount(entries, photoLimit) {
+  const maxPhotos = Math.max(0, Math.floor(Number(photoLimit) || 0));
+  if (!maxPhotos) return { entries: [], photoCount: 0, truncated: Array.isArray(entries) && entries.length > 0 };
+  const src = Array.isArray(entries) ? entries : [];
+  const out = [];
+  let remaining = maxPhotos;
+  let count = 0;
+  let truncated = false;
+  for (const item of src) {
+    if (!item || typeof item !== "object") continue;
+    const photos = Array.isArray(item.photos) ? item.photos : [];
+    if (!photos.length) continue;
+    if (remaining <= 0) {
+      truncated = true;
+      break;
+    }
+    if (photos.length <= remaining) {
+      out.push(item);
+      remaining -= photos.length;
+      count += photos.length;
+      continue;
+    }
+    out.push({ ...item, photos: photos.slice(0, remaining) });
+    count += remaining;
+    remaining = 0;
+    truncated = true;
+    break;
+  }
+  if (!truncated && out.length < src.filter((item) => item && Array.isArray(item.photos) && item.photos.length).length) {
+    truncated = true;
+  }
+  return { entries: out, photoCount: count, truncated };
 }
 
 function isEntryVisibleForViewer(entry, allowPrivate) {
@@ -3859,15 +3905,22 @@ export function registerPhotoTimelineRoutes(app, opts) {
   const liveRoot = resolvePhotoTimelineLiveRoot(publicDir, serverDir);
 
   app.get("/api/photo-timeline/session", function (req, res) {
-    const hasSecret = !!getUserSecret();
+    const auth = getUserAuthConfig();
     const loggedIn = isUserLoggedIn(req);
-    res.json({ ok: true, hasSecret, loggedIn });
+    res.json({
+      ok: true,
+      hasSecret: auth.enabled,
+      authConfigured: auth.enabled,
+      loggedIn,
+      username: auth.enabled ? auth.username : "",
+      ttlSec: getUserSessionTtlSec(),
+      guestVisiblePhotoLimit: GUEST_VISIBLE_PHOTO_LIMIT,
+    });
   });
 
   app.post("/api/photo-timeline/login", function (req, res) {
     const body = req.body && typeof req.body === "object" ? req.body : {};
-    const token = body.token != null ? String(body.token) : "";
-    if (!assertUserLoginToken(req, res, token)) return;
+    if (!assertUserLogin(req, res, body)) return;
     issueUserSessionCookie(req, res);
     res.json({ ok: true });
   });
@@ -3912,43 +3965,54 @@ export function registerPhotoTimelineRoutes(app, opts) {
       const sort = String(req.query.sort || "desc").toLowerCase();
       const sortDesc = sort !== "asc";
       const allowPrivate = isUserLoggedIn(req);
-      const offset = Math.max(0, Math.floor(Number(req.query.offset) || 0));
+      const requestedOffset = Math.max(0, Math.floor(Number(req.query.offset) || 0));
       const limit = Math.max(1, Math.min(1000, Math.floor(Number(req.query.limit) || 5)));
       const tagValues = Array.isArray(req.query.tag)
         ? req.query.tag
         : req.query.tag != null
           ? [req.query.tag]
           : [];
+      const pageOffset = allowPrivate ? requestedOffset : 0;
+      const pageLimit = allowPrivate ? limit : 2000;
       const page = readTimelineEntriesPage({
         serverDir,
         sortDesc,
-        offset,
-        limit,
+        offset: pageOffset,
+        limit: pageLimit,
         query: req.query.q,
         tags: tagValues,
         anchorDate: req.query.anchorDate,
       });
-      page.entries = Array.isArray(page.entries)
+      const visibleEntries = Array.isArray(page.entries)
         ? page.entries
             .filter((e) => isEntryVisibleForViewer(e, allowPrivate))
-            .map((e) => filterEntryPhotosByVisibility(e, allowPrivate))
+            .map((e) => cloneEntryWithVisiblePhotos(e, allowPrivate))
             .filter((e) => Array.isArray(e.photos) && e.photos.length > 0)
         : [];
+      const guestPreview = !allowPrivate
+        ? limitEntriesToPhotoCount(visibleEntries, GUEST_VISIBLE_PHOTO_LIMIT)
+        : null;
+      const entries = guestPreview ? guestPreview.entries : visibleEntries;
       res.json({
         version: "2",
         pageSize: limit,
-        entries: page.entries,
+        entries,
         total: page.total,
-        offset: page.offset,
-        limit: page.limit,
-        nextOffset: page.nextOffset,
+        offset: allowPrivate ? page.offset : 0,
+        limit: allowPrivate ? page.limit : limit,
+        nextOffset: allowPrivate ? page.nextOffset : null,
         availableTags: page.availableTags,
         availablePlaces: page.availablePlaces,
         availablePlaceGroups: page.availablePlaceGroups,
         minDate: page.minDate,
         maxDate: page.maxDate,
-        anchorEntryId: page.anchorEntryId,
+        anchorEntryId:
+          entries.find((e) => String(e && e.id) === String(page.anchorEntryId || ""))?.id || "",
         anchorMatchedDate: page.anchorMatchedDate,
+        loggedIn: allowPrivate,
+        guestVisiblePhotoLimit: !allowPrivate ? GUEST_VISIBLE_PHOTO_LIMIT : null,
+        guestVisiblePhotoCount: guestPreview ? guestPreview.photoCount : null,
+        guestPreviewTruncated: guestPreview ? guestPreview.truncated : false,
       });
     } catch (err) {
       res.status(500).json({ error: String(err && err.message) });

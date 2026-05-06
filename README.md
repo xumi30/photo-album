@@ -40,11 +40,18 @@ npm run start
 
 服务端会把该目录挂载到 `GET /assets/live/...`，并在同步时从该目录递归扫描 `photo-timeline-entry.json`。
 
-### 可选：访客登录（用于“需登录可见”的照片）
+### 可选：前台登录（用于“需登录可见”的照片）
 
 在 `server/.env` 配置：
 
-- `PHOTO_TIMELINE_USER_SECRET`: 访客登录口令（用于查看照片可见性为 `private` 的媒体）
+- `PHOTO_TIMELINE_USER_USERNAME`: 前台登录用户名
+- `PHOTO_TIMELINE_USER_PASSWORD`: 前台登录密码
+
+说明：
+
+- 登录后通过 HttpOnly Cookie 维持会话，20 分钟过期
+- 未登录用户最多预览 10 张照片
+- 前台鉴权统一以登录 Cookie 为准
 
 ### 开发（可选）
 

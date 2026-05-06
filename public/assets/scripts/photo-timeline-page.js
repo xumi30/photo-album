@@ -22,6 +22,12 @@
   let apiRequestSeq = 0;
   let remoteMinDate = "";
   let remoteMaxDate = "";
+  let apiMeta = {
+    loggedIn: false,
+    guestVisiblePhotoLimit: null,
+    guestVisiblePhotoCount: null,
+    guestPreviewTruncated: false,
+  };
 
   const $ = (id) => document.getElementById(id);
 
@@ -48,6 +54,7 @@
   const clearBtn = $("clearBtn");
   const timeline = $("timeline");
   const loadMore = $("loadMore");
+  const guestLimitNotice = $("guestLimitNotice");
   const emptyState = $("emptyState");
   const lightbox = $("lightbox");
   const lightboxImage = $("lightboxImage");
@@ -188,7 +195,7 @@
     return data;
   };
 
-  let userSession = { hasSecret: false, loggedIn: false };
+  let userSession = { hasSecret: false, loggedIn: false, username: "", ttlSec: 20 * 60 };
 
   const updateUserAuthBtnUi = () => {
     if (!userAuthBtn) return;
@@ -198,13 +205,15 @@
     }
     if (!userSession.hasSecret) {
       userAuthBtn.textContent = "登录（未配置）";
-      userAuthBtn.title = "服务端未配置 PHOTO_TIMELINE_USER_SECRET";
+      userAuthBtn.title = "服务端未配置 PHOTO_TIMELINE_USER_USERNAME / PHOTO_TIMELINE_USER_PASSWORD";
       userAuthBtn.disabled = true;
       return;
     }
     userAuthBtn.disabled = false;
     userAuthBtn.textContent = userSession.loggedIn ? "退出" : "登录";
-    userAuthBtn.title = userSession.loggedIn ? "退出登录" : "登录后可查看“需登录”的照片";
+    userAuthBtn.title = userSession.loggedIn
+      ? `已登录${userSession.username ? `：${userSession.username}` : ""}，点击退出`
+      : "前往独立登录页";
   };
 
   const refreshUserSession = async () => {
@@ -214,9 +223,11 @@
       userSession = {
         hasSecret: !!(data && data.hasSecret),
         loggedIn: !!(data && data.loggedIn),
+        username: data && data.username ? String(data.username) : "",
+        ttlSec: data && Number(data.ttlSec) > 0 ? Number(data.ttlSec) : 20 * 60,
       };
     } catch {
-      userSession = { hasSecret: false, loggedIn: false };
+      userSession = { hasSecret: false, loggedIn: false, username: "", ttlSec: 20 * 60 };
     }
     updateUserAuthBtnUi();
   };
@@ -243,8 +254,9 @@
     }
     const list = Array.isArray(data.entries) ? data.entries.slice() : [];
     allEntries = options.append ? allEntries.concat(list) : list;
-    remoteTotal =
+    const totalFromApi =
       typeof data.total === "number" && data.total >= 0 ? Math.floor(data.total) : allEntries.length;
+    remoteTotal = Math.max(totalFromApi, allEntries.length);
     availableTags = Array.isArray(data.availableTags) ? data.availableTags.slice() : [];
     availablePlaces = Array.isArray(data.availablePlaces) ? data.availablePlaces.slice() : [];
     availablePlaceGroups = Array.isArray(data.availablePlaceGroups)
@@ -252,6 +264,14 @@
       : [];
     remoteMinDate = typeof data.minDate === "string" ? data.minDate : "";
     remoteMaxDate = typeof data.maxDate === "string" ? data.maxDate : "";
+    apiMeta = {
+      loggedIn: !!(data && data.loggedIn),
+      guestVisiblePhotoLimit:
+        data && Number(data.guestVisiblePhotoLimit) > 0 ? Number(data.guestVisiblePhotoLimit) : null,
+      guestVisiblePhotoCount:
+        data && Number(data.guestVisiblePhotoCount) >= 0 ? Number(data.guestVisiblePhotoCount) : null,
+      guestPreviewTruncated: !!(data && data.guestPreviewTruncated),
+    };
     const nextOffset =
       typeof data.nextOffset === "number" && data.nextOffset >= 0 ? Math.floor(data.nextOffset) : null;
     nextChunkUrl = nextOffset != null ? buildApiEntriesUrl({ offset: nextOffset, limit: pageSize }) : null;
@@ -296,15 +316,10 @@
         }
 
         if (!userSession.hasSecret) {
-          throw new Error("服务端未配置 PHOTO_TIMELINE_USER_SECRET");
+          throw new Error("服务端未配置 PHOTO_TIMELINE_USER_USERNAME / PHOTO_TIMELINE_USER_PASSWORD");
         }
-
-        var token = window.prompt("输入访问口令（登录后可查看“需登录”的照片）");
-        if (!String(token || "").trim()) return;
-        await postJson("/api/photo-timeline/login", { token: String(token || "").trim() });
-        await refreshUserSession();
-        await reloadEntriesFromApi();
-        render();
+        const next = window.location.pathname + window.location.search + window.location.hash;
+        window.location.href = `/login.html?next=${encodeURIComponent(next)}`;
       } catch (e) {
         window.alert(String((e && e.message) || e));
       }
@@ -2307,14 +2322,27 @@
       delete timeline.dataset.visibleCount;
     }
     emptyState.style.display = visible.length === 0 ? "block" : "none";
-    const totalLabel = hasApi ? remoteTotal : data.length;
+    const totalLabel = "999+";
     const shownLabel = visible.length;
     const dayGroups = groupEntriesByCalendarDay(visible);
     const shownDays = dayGroups.length;
-    countText.textContent = `${totalLabel} 条 · 已展示 ${shownLabel} 条 · ${shownDays} 个日期`;
+    let summary = `${totalLabel} 条 · 已展示 ${shownLabel} 条 · ${shownDays} 个日期`;
+    if (hasApi && !apiMeta.loggedIn && apiMeta.guestVisiblePhotoLimit) {
+      summary += ` · 游客最多预览 ${apiMeta.guestVisiblePhotoLimit} 张照片`;
+    }
+    countText.textContent = summary;
     const hasMoreInMemory = hasApi ? false : visible.length < data.length;
     const hasMoreRemote = !!nextChunkUrl;
     loadMore.style.display = hasMoreInMemory || hasMoreRemote ? "" : "none";
+    if (guestLimitNotice) {
+      const showGuestLimitNotice =
+        hasApi &&
+        !apiMeta.loggedIn &&
+        !!apiMeta.guestPreviewTruncated &&
+        !hasMoreRemote &&
+        visible.length > 0;
+      guestLimitNotice.style.display = showGuestLimitNotice ? "block" : "none";
+    }
 
     const animIndexRef = { value: 0 };
     if (!shouldAppend) {

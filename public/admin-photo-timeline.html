@@ -36,7 +36,7 @@
       margin-bottom: 16px;
     }
     label { display: block; font-size: 0.8rem; color: var(--muted); margin-bottom: 6px; }
-    input[type="password"], input[type="text"], textarea {
+    input[type="password"], input[type="text"], textarea, select {
       width: 100%;
       padding: 10px 12px;
       border-radius: 8px;
@@ -90,6 +90,8 @@
     .modal__card {
       width: min(720px, 100%);
       margin-top: 6vh;
+      max-height: 88vh;
+      overflow: auto;
     }
     .modal__card--wide {
       width: min(1100px, 100%);
@@ -205,6 +207,32 @@
       gap: 10px;
     }
     .bulk-head__spacer { flex: 1; }
+    .bulk-edit {
+      margin-top: 12px;
+      padding: 12px;
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      background: #12151c;
+    }
+    .bulk-edit h3 {
+      margin: 0 0 10px;
+      font-size: 0.95rem;
+      font-weight: 600;
+    }
+    .bulk-edit__field {
+      display: grid;
+      gap: 6px;
+      align-content: start;
+    }
+    .bulk-edit__check {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      margin: 0;
+      color: var(--muted);
+      font-size: 0.8rem;
+    }
+    .bulk-edit__check input { margin: 0; }
     .msg { font-size: 0.88rem; min-height: 1.4em; }
     .msg.err { color: var(--err); }
     .msg.ok { color: var(--ok); }
@@ -585,6 +613,59 @@
         </div>
         <p id="bulkMsg" class="msg"></p>
         <div id="bulkPhotosGrid" class="bulk-grid" aria-label="照片网格"></div>
+        <div class="bulk-edit" aria-label="批量编辑字段">
+          <h3>批量编辑所选照片</h3>
+          <div class="row cols-2">
+            <div class="bulk-edit__field">
+              <label class="bulk-edit__check"><input type="checkbox" id="bulkUseCaption" /> 写入 Caption</label>
+              <input type="text" id="bulkCaption" placeholder="统一标题 / 说明" />
+            </div>
+            <div class="bulk-edit__field">
+              <label class="bulk-edit__check"><input type="checkbox" id="bulkUsePeople" /> 写入人物（逗号分隔）</label>
+              <input type="text" id="bulkPeople" placeholder="例如：Lei, Mom" />
+            </div>
+          </div>
+          <div class="row cols-2">
+            <div class="bulk-edit__field">
+              <label class="bulk-edit__check"><input type="checkbox" id="bulkUsePlaceName" /> 写入地点名称</label>
+              <input type="text" id="bulkPlaceName" placeholder="例如：杭州西湖断桥" />
+            </div>
+            <div class="bulk-edit__field">
+              <label class="bulk-edit__check"><input type="checkbox" id="bulkUsePlaceCategory" /> 写入地点分类</label>
+              <input type="text" id="bulkPlaceCategory" placeholder="例如：公园 / 餐厅 / 家里" />
+            </div>
+          </div>
+          <div class="row cols-2">
+            <div class="bulk-edit__field">
+              <label class="bulk-edit__check"><input type="checkbox" id="bulkUseScene" /> 写入场景主类</label>
+              <input type="text" id="bulkScene" placeholder="例如：城市夜景 / 家庭聚会" />
+            </div>
+            <div class="bulk-edit__field">
+              <label class="bulk-edit__check"><input type="checkbox" id="bulkUseSceneTags" /> 写入场景标签（逗号分隔）</label>
+              <input type="text" id="bulkSceneTags" placeholder="例如：日落, 湖面, 冬天" />
+            </div>
+          </div>
+          <div class="row cols-2">
+            <div class="bulk-edit__field">
+              <label class="bulk-edit__check"><input type="checkbox" id="bulkUseSource" /> 写入语义来源</label>
+              <input type="text" id="bulkSource" placeholder="例如：manual" />
+            </div>
+            <div class="bulk-edit__field">
+              <label class="bulk-edit__check"><input type="checkbox" id="bulkUseNotes" /> 写入备注</label>
+              <input type="text" id="bulkNotes" placeholder="补充信息 / 待确认问题" />
+            </div>
+          </div>
+          <div class="row">
+            <div class="bulk-edit__field">
+              <label class="bulk-edit__check"><input type="checkbox" id="bulkUseSummary" /> 写入看图摘要</label>
+              <textarea id="bulkSummary" placeholder="一句话描述这些照片的共同内容"></textarea>
+            </div>
+          </div>
+          <div class="toolbar" style="margin-bottom: 0;">
+            <button type="button" id="btnBulkApplyMeta">批量写入已勾选字段</button>
+            <span style="color: var(--muted); font-size: 0.82rem;">只会覆盖已勾选字段；未勾选字段保持原样。</span>
+          </div>
+        </div>
         <div class="bulk-bar" aria-label="批量操作栏">
           <span id="bulkSelectedText" style="color: var(--muted); font-size: 0.88rem;">已选 0</span>
           <button type="button" id="btnBulkSelectAll" class="secondary">全选（已加载）</button>
@@ -657,6 +738,25 @@
   const btnBulkClearSel = document.getElementById("btnBulkClearSel");
   const btnBulkSetPublic = document.getElementById("btnBulkSetPublic");
   const btnBulkSetPrivate = document.getElementById("btnBulkSetPrivate");
+  const btnBulkApplyMeta = document.getElementById("btnBulkApplyMeta");
+  const bulkUseCaption = document.getElementById("bulkUseCaption");
+  const bulkCaption = document.getElementById("bulkCaption");
+  const bulkUsePeople = document.getElementById("bulkUsePeople");
+  const bulkPeople = document.getElementById("bulkPeople");
+  const bulkUsePlaceName = document.getElementById("bulkUsePlaceName");
+  const bulkPlaceName = document.getElementById("bulkPlaceName");
+  const bulkUsePlaceCategory = document.getElementById("bulkUsePlaceCategory");
+  const bulkPlaceCategory = document.getElementById("bulkPlaceCategory");
+  const bulkUseScene = document.getElementById("bulkUseScene");
+  const bulkScene = document.getElementById("bulkScene");
+  const bulkUseSceneTags = document.getElementById("bulkUseSceneTags");
+  const bulkSceneTags = document.getElementById("bulkSceneTags");
+  const bulkUseSource = document.getElementById("bulkUseSource");
+  const bulkSource = document.getElementById("bulkSource");
+  const bulkUseNotes = document.getElementById("bulkUseNotes");
+  const bulkNotes = document.getElementById("bulkNotes");
+  const bulkUseSummary = document.getElementById("bulkUseSummary");
+  const bulkSummary = document.getElementById("bulkSummary");
 
   let allEntries = [];
   let listFilterTimer = null;
@@ -801,12 +901,37 @@
     return d.innerHTML;
   }
 
+  function parseCsv(value) {
+    return String(value || "")
+      .split(/[,\n，]/)
+      .map(function (part) { return String(part || "").trim(); })
+      .filter(Boolean);
+  }
+
   function mediaUrl(rel) {
     if (!rel || typeof rel !== "string") return "";
     var s = rel.trim();
     if (/^https?:\/\//i.test(s)) return s;
-    if (s.startsWith("/")) return s;
-    return "/" + s.replace(/^\/+/, "");
+    // This admin page can be served at:
+    // - /admin-photo-timeline.html (photo-album standalone)
+    // - /photo-album/admin-photo-timeline.html (repo root server mounts photo-album under /photo-album)
+    // Static media in this feature typically lives under assets/live.
+    var base = "";
+    try {
+      if (window.location && typeof window.location.pathname === "string") {
+        base = window.location.pathname.startsWith("/photo-album/") ? "/photo-album" : "";
+      }
+    } catch (e) {
+      base = "";
+    }
+    if (s.startsWith("/")) {
+      // If we are mounted under /photo-album, rewrite common static paths.
+      if (base && (s === "/assets/live" || s.startsWith("/assets/live/"))) return base + s;
+      return s;
+    }
+    var norm = "/" + s.replace(/^\/+/, "");
+    if (base && (norm === "/assets/live" || norm.startsWith("/assets/live/"))) return base + norm;
+    return norm;
   }
 
   function updateBulkSelectedText() {
@@ -814,8 +939,76 @@
     bulkSelectedText.textContent = "已选 " + bulkState.selected.size;
   }
 
-  function bulkItemKey(item) {
-    return item && item.photoId != null ? String(item.photoId) : "";
+  function selectedBulkItems() {
+    var out = [];
+    bulkState.items.forEach(function (it) {
+      if (!it || it.photoId == null) return;
+      if (bulkState.selected.has(String(it.photoId))) out.push(it);
+    });
+    return out;
+  }
+
+  function checked(el) {
+    return !!(el && el.checked);
+  }
+
+  function bulkText(el) {
+    return el ? String(el.value || "").trim() : "";
+  }
+
+  function buildBulkMetaPatch() {
+    var payload = {};
+    var semantic = {};
+    var hasAny = false;
+    var hasSemantic = false;
+
+    if (checked(bulkUseCaption)) {
+      payload.caption = bulkText(bulkCaption);
+      hasAny = true;
+    }
+    if (checked(bulkUsePeople)) {
+      semantic.people = parseCsv(bulkPeople ? bulkPeople.value : "");
+      hasAny = true;
+      hasSemantic = true;
+    }
+    if (checked(bulkUsePlaceName)) {
+      semantic.place_name = bulkText(bulkPlaceName);
+      hasAny = true;
+      hasSemantic = true;
+    }
+    if (checked(bulkUsePlaceCategory)) {
+      semantic.place_category = bulkText(bulkPlaceCategory);
+      hasAny = true;
+      hasSemantic = true;
+    }
+    if (checked(bulkUseScene)) {
+      semantic.scene = bulkText(bulkScene);
+      hasAny = true;
+      hasSemantic = true;
+    }
+    if (checked(bulkUseSceneTags)) {
+      semantic.scene_tags = parseCsv(bulkSceneTags ? bulkSceneTags.value : "");
+      hasAny = true;
+      hasSemantic = true;
+    }
+    if (checked(bulkUseSummary)) {
+      semantic.summary = bulkText(bulkSummary);
+      hasAny = true;
+      hasSemantic = true;
+    }
+    if (checked(bulkUseSource)) {
+      semantic.source = bulkText(bulkSource);
+      hasAny = true;
+      hasSemantic = true;
+    }
+    if (checked(bulkUseNotes)) {
+      semantic.notes = bulkText(bulkNotes);
+      hasAny = true;
+      hasSemantic = true;
+    }
+    if (hasSemantic) payload.semantic = semantic;
+    if (!hasAny) throw new Error("请先勾选至少一个要批量写入的字段");
+    return payload;
   }
 
   function renderBulkGrid() {
@@ -1003,6 +1196,51 @@
     }
     // 刷新条目列表（缩略图/可见性提示）
     loadList();
+  }
+
+  async function bulkApplyMeta() {
+    var items = selectedBulkItems();
+    if (!items.length) throw new Error("请先选择至少一张照片");
+    var patch = buildBulkMetaPatch();
+    if (!confirmTwice("确定批量写入已勾选字段？", "将更新 " + items.length + " 张照片；未勾选字段保持原样。")) {
+      return;
+    }
+    if (bulkMsg) {
+      bulkMsg.textContent = "批量写入中… 0 / " + items.length;
+      bulkMsg.className = "msg";
+    }
+    if (btnBulkApplyMeta) btnBulkApplyMeta.disabled = true;
+    try {
+      var done = 0;
+      for (var i = 0; i < items.length; i++) {
+        var it = items[i];
+        var entryId = String((it && it.entryId) || "").trim();
+        var photoId = it && it.photoId != null ? String(it.photoId) : "";
+        if (!entryId || !photoId) continue;
+        await api(
+          "/api/admin/photo-timeline/entry/" + encodeURIComponent(entryId) + "/photo/" + encodeURIComponent(photoId),
+          {
+            method: "PUT",
+            body: JSON.stringify(patch),
+          }
+        );
+        if (patch.caption !== undefined) it.caption = patch.caption;
+        if (patch.semantic !== undefined) {
+          var prev = it.semantic && typeof it.semantic === "object" ? it.semantic : {};
+          it.semantic = Object.assign({}, prev, patch.semantic);
+        }
+        done += 1;
+        if (bulkMsg) bulkMsg.textContent = "批量写入中… " + done + " / " + items.length;
+      }
+      renderBulkGrid();
+      if (bulkMsg) {
+        bulkMsg.textContent = "已批量写入 " + done + " 张照片";
+        bulkMsg.className = "msg ok";
+      }
+      loadList();
+    } finally {
+      if (btnBulkApplyMeta) btnBulkApplyMeta.disabled = false;
+    }
   }
 
   function firstThumbSrc(entry) {
@@ -1693,11 +1931,7 @@
 
   if (btnBulkPhotos) {
     btnBulkPhotos.addEventListener("click", function () {
-      try {
-        window.open("/admin-photo-bulk.html", "_blank", "noopener,noreferrer");
-      } catch (e) {
-        window.location.href = "/admin-photo-bulk.html";
-      }
+      openBulkPhotosModal();
     });
   }
   if (btnBulkClose) {
@@ -1790,6 +2024,17 @@
           bulkMsg.textContent = String(e.message || e);
           bulkMsg.className = "msg err";
         }
+      });
+    });
+  }
+  if (btnBulkApplyMeta) {
+    btnBulkApplyMeta.addEventListener("click", function () {
+      bulkApplyMeta().catch(function (e) {
+        if (bulkMsg) {
+          bulkMsg.textContent = String(e.message || e);
+          bulkMsg.className = "msg err";
+        }
+        if (btnBulkApplyMeta) btnBulkApplyMeta.disabled = false;
       });
     });
   }

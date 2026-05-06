@@ -1,0 +1,120 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="description" content="照片册登录页" />
+    <title>登录 · 照片册</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Noto+Sans+SC:wght@300;400;500;700&family=Noto+Serif+SC:wght@500;600;700&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="stylesheet" href="./assets/styles/login.css" />
+  </head>
+  <body>
+    <main class="login-layout">
+      <section class="visual-panel" id="visualPanel" aria-hidden="true">
+        <div class="visual-grid"></div>
+        <div class="visual-glow visual-glow--one"></div>
+        <div class="visual-glow visual-glow--two"></div>
+
+        <div class="visual-top">
+          <div class="brand-badge">PA</div>
+          <div class="brand-copy">
+            <strong>Photo Album</strong>
+            <span>Private Timeline Access</span>
+          </div>
+        </div>
+
+        <div class="character-stage">
+          <div class="character character--purple" data-character>
+            <div class="character__head">
+              <span class="eye-ball"><span class="pupil"></span></span>
+              <span class="eye-ball"><span class="pupil"></span></span>
+            </div>
+          </div>
+          <div class="character character--black" data-character>
+            <div class="character__head">
+              <span class="eye-ball eye-ball--small"><span class="pupil pupil--small"></span></span>
+              <span class="eye-ball eye-ball--small"><span class="pupil pupil--small"></span></span>
+            </div>
+          </div>
+          <div class="character character--orange" data-character>
+            <div class="character__head character__head--dot">
+              <span class="dot-eye"><span class="dot-pupil"></span></span>
+              <span class="dot-eye"><span class="dot-pupil"></span></span>
+            </div>
+          </div>
+          <div class="character character--yellow" data-character>
+            <div class="character__head character__head--dot">
+              <span class="dot-eye"><span class="dot-pupil"></span></span>
+              <span class="dot-eye"><span class="dot-pupil"></span></span>
+            </div>
+            <span class="character__mouth"></span>
+          </div>
+        </div>
+
+        <div class="visual-footer">
+          <a href="./photo-timeline.html">时间轴</a>
+          <a href="./photo-map.html">地图分布</a>
+        </div>
+      </section>
+
+      <section class="form-panel" aria-labelledby="loginTitle">
+        <div class="form-wrap">
+          <div class="form-mobile-brand">
+            <div class="brand-badge brand-badge--light">PA</div>
+            <strong>Photo Album</strong>
+          </div>
+
+          <a class="back-link" href="./photo-timeline.html">返回时间轴</a>
+
+          <header class="form-header">
+            <p class="form-kicker">PHOTO ALBUM</p>
+            <h1 id="loginTitle">登录到照片册</h1>
+            <p class="form-subtitle">登录态以站点 Cookie 为准，20 分钟后自动失效。未登录时仅可预览前 10 张照片。</p>
+          </header>
+
+          <form id="loginForm" class="login-form">
+            <label class="field">
+              <span class="field__label">账号</span>
+              <input id="username" name="username" type="text" autocomplete="username" placeholder="输入您的账号" required />
+            </label>
+
+            <label class="field">
+              <span class="field__label">密码</span>
+              <div class="password-wrap">
+                <input
+                  id="password"
+                  name="password"
+                  type="password"
+                  autocomplete="current-password"
+                  placeholder="输入您的密码"
+                  required
+                />
+                <button id="togglePasswordBtn" class="password-toggle" type="button" aria-label="显示密码" title="显示密码">
+                  <span class="password-toggle__icon"></span>
+                </button>
+              </div>
+            </label>
+
+            <p id="loginStatus" class="login-status" aria-live="polite"></p>
+
+            <button id="loginSubmit" type="submit" class="login-submit">登录</button>
+          </form>
+
+          <div class="divider"><span>或</span></div>
+
+          <div class="form-actions">
+            <a id="continueLink" class="secondary-link" href="./photo-timeline.html">继续以游客身份浏览</a>
+            <button id="logoutBtn" type="button" class="secondary-btn" hidden>退出当前登录</button>
+          </div>
+        </div>
+      </section>
+    </main>
+
+    <script src="./assets/scripts/login-page.js" defer></script>
+  </body>
+</html>

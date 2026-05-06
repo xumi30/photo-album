@@ -232,16 +232,23 @@ def resolve_repo_root(output_root: str) -> Optional[Path]:
     return None
 
 
-def run_photo_timeline_db_sync(repo_root: Path, logger: logging.Logger) -> bool:
+def run_photo_timeline_db_sync(
+    repo_root: Path, logger: logging.Logger, live_root: Optional[str] = None
+) -> bool:
     """在项目根执行 node server/photo-timeline-cli.mjs，将 public/assets/live 下 JSON 写入 SQLite。"""
     cli = repo_root / "server" / "photo-timeline-cli.mjs"
     if not cli.is_file():
         logger.warning("未找到 %s，跳过数据库同步", cli)
         return False
     try:
+        env = os.environ.copy()
+        if live_root:
+            env["PHOTO_TIMELINE_LIVE_ROOT"] = str(live_root)
+
         r = subprocess.run(
             [os.environ.get("NODE_EXE", "node"), str(cli)],
             cwd=str(repo_root),
+            env=env,
             capture_output=True,
             text=True,
             encoding='utf-8',
@@ -268,19 +275,29 @@ def run_photo_timeline_db_sync(repo_root: Path, logger: logging.Logger) -> bool:
         return False
 
 
-def maybe_sync_photo_timeline_db(output_root: str, logger: logging.Logger) -> None:
+def maybe_sync_photo_timeline_db(
+    output_root: str,
+    logger: logging.Logger,
+    *,
+    repo_root_hint: Optional[str] = None,
+    live_root: Optional[str] = None,
+) -> None:
     """若设置环境变量 LIVP_NO_DB_SYNC=1 则跳过。"""
     if os.environ.get("LIVP_NO_DB_SYNC", "").strip() in ("1", "true", "yes"):
         logger.info("已设置 LIVP_NO_DB_SYNC，跳过 SQLite 同步")
         return
     root = resolve_repo_root(output_root)
+    if root is None and repo_root_hint:
+        hint = Path(repo_root_hint).resolve()
+        if (hint / "server" / "photo-timeline-cli.mjs").is_file():
+            root = hint
     if root is None:
         logger.info(
             "未检测到仓库根（向上查找 server/photo-timeline-cli.mjs 失败），跳过 SQLite 同步；"
             "或手动在项目根执行: npm run sync-photo-timeline"
         )
         return
-    run_photo_timeline_db_sync(root, logger)
+    run_photo_timeline_db_sync(root, logger, live_root=live_root)
 
 
 def setup_logging(output_dir: Path) -> logging.Logger:
