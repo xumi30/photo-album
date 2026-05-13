@@ -1,5 +1,5 @@
 /**
- * Photo timeline: SQLite + scan public/assets/live (recursive) for photo-timeline-entry.json
+ * Photo timeline: SQLite + scan默认素材根 data/live（递归）下的 photo-timeline-entry.json
  */
 import crypto from "node:crypto";
 import { spawnSync } from "node:child_process";
@@ -23,19 +23,78 @@ const PHOTO_TIMELINE_SCHEMA_PATH = path.join(__dirname, "schema", "photo-timelin
 const SYNC_HEADER = "x-photo-timeline-sync-secret";
 const GUEST_VISIBLE_PHOTO_LIMIT = 30;
 
+/** 用户上传照片目录（物理路径）；对应站点 URL 前缀 `/upload/photos` 下的 `uploadphotos/…` 相对路径由 resolveVerifiedSiteFilePath 校验 */
+let photoTimelineUploadAbsRoot = null;
+
+/**
+ * @param {string} serverDir
+ * @param {{ uploadPhotosRoot?: string | null | undefined }} [opts]
+ */
+export function resolvePhotoTimelineUploadRoot(serverDir, opts) {
+  const raw = String(process.env.PHOTO_UPLOAD_ROOT || "").trim();
+  if (raw) {
+    return path.isAbsolute(raw) ? path.resolve(raw) : path.resolve(path.join(serverDir, ".."), raw);
+  }
+  if (opts && opts.uploadPhotosRoot != null && String(opts.uploadPhotosRoot).trim()) {
+    return path.resolve(String(opts.uploadPhotosRoot));
+  }
+  return path.resolve(path.join(serverDir, "..", "uploadphotos"));
+}
+
 function resolvePhotoTimelineLiveRoot(publicDir, serverDir) {
   const raw = String(process.env.PHOTO_TIMELINE_LIVE_ROOT || "").trim();
-  if (!raw) return path.join(publicDir, "assets", "live");
-  if (path.isAbsolute(raw)) return raw;
   const rootDir = path.join(serverDir, "..");
+  if (!raw) return path.join(rootDir, "data", "live");
+  if (path.isAbsolute(raw)) return raw;
   return path.resolve(rootDir, raw);
 }
 
-function sourcePathForEntryJson(publicDir, absJsonPath) {
+/**
+ * SQLite 路径：默认仓库根目录 `data/photo-timeline.sqlite`，与 `server/` 代码分离。
+ * `PHOTO_TIMELINE_DB_PATH`：可选，绝对路径或相对 photo-album 根目录的路径。
+ */
+function resolvePhotoTimelineDbPath(serverDir) {
+  const rootDir = path.join(serverDir, "..");
+  const custom = String(process.env.PHOTO_TIMELINE_DB_PATH || "").trim();
+  if (custom) {
+    return path.isAbsolute(custom) ? path.resolve(custom) : path.resolve(rootDir, custom);
+  }
+  return path.join(rootDir, "data", "photo-timeline.sqlite");
+}
+
+/**
+ * 计算入库用的 source_path：优先为相对素材根的逻辑路径 `assets/live/…`（物理可在 data/live），
+ * 便于写回 JSON 与 resolveVerifiedSiteFilePath；勿再用相对 publicDir（会把 data/live 误落成绝对路径或错位）。
+ */
+function sourcePathForEntryJson(publicDir, serverDir, absJsonPath) {
+  const liveRoot = resolvePhotoTimelineLiveRoot(publicDir, serverDir);
   try {
-    const rel = path.relative(publicDir, absJsonPath) || absJsonPath;
-    if (rel.startsWith("..") || path.isAbsolute(rel)) return absJsonPath;
-    return rel;
+    let abs = path.resolve(String(absJsonPath || ""));
+    let live = path.resolve(liveRoot);
+    try {
+      abs = fs.realpathSync(abs);
+    } catch {
+      /* keep abs */
+    }
+    try {
+      live = fs.realpathSync(live);
+    } catch {
+      /* keep live */
+    }
+    const relToLive = path.relative(live, abs);
+    if (relToLive && !relToLive.startsWith("..") && !path.isAbsolute(relToLive)) {
+      const norm = relToLive.replace(/\\/g, "/");
+      return `assets/live/${norm}`;
+    }
+  } catch {
+    /* fall through */
+  }
+  try {
+    const pub = path.resolve(publicDir);
+    const abs = path.resolve(String(absJsonPath || ""));
+    const rel = path.relative(pub, abs) || absJsonPath;
+    if (rel.startsWith("..") || path.isAbsolute(rel)) return abs;
+    return rel.replace(/\\/g, "/");
   } catch {
     return absJsonPath;
   }
@@ -66,6 +125,19 @@ function resolveVerifiedSiteFilePath(publicDir, liveRoot, relOrAbs) {
   const raw = String(relOrAbs || "").trim();
   if (!raw) throw new Error("非法路径");
 
+  const normEarly = raw.replace(/\\/g, "/");
+  if (photoTimelineUploadAbsRoot && /^\/?uploadphotos(\/|$)/.test(normEarly)) {
+    const nolead = normEarly.replace(/^\/+/, "");
+    const upPrefix = "uploadphotos/";
+    if (nolead !== "uploadphotos" && !nolead.startsWith(upPrefix)) throw new Error("非法路径");
+    const sub = nolead === "uploadphotos" ? "" : nolead.slice(upPrefix.length);
+    const root = path.resolve(photoTimelineUploadAbsRoot);
+    const abs = path.resolve(root, sub);
+    const relBack = path.relative(root, abs);
+    if (relBack.startsWith("..") || path.isAbsolute(relBack)) throw new Error("非法路径");
+    return abs;
+  }
+
   // 兼容 source_path 被写成绝对路径（PHOTO_TIMELINE_LIVE_ROOT 不在 public 内时）。
   if (path.isAbsolute(raw)) {
     const abs = path.resolve(raw);
@@ -75,12 +147,20 @@ function resolveVerifiedSiteFilePath(publicDir, liveRoot, relOrAbs) {
     const relToLive = path.relative(live, abs);
     const inPublic = !(relToPub.startsWith("..") || path.isAbsolute(relToPub));
     const inLive = !(relToLive.startsWith("..") || path.isAbsolute(relToLive));
+    if (photoTimelineUploadAbsRoot) {
+      const up = path.resolve(photoTimelineUploadAbsRoot);
+      const relToUp = path.relative(up, abs);
+      const inUpload = !(relToUp.startsWith("..") || path.isAbsolute(relToUp));
+      if (inUpload) return abs;
+    }
     if (!inPublic && !inLive) throw new Error("非法路径");
     return abs;
   }
 
   const safeRel = assertSafePublicRelativePath(raw);
-  const norm = safeRel.replace(/\\/g, "/");
+  let norm = safeRel.replace(/\\/g, "/");
+  const pubAssetsStrip = /^public\/assets\/live\/(.+)$/i.exec(norm);
+  if (pubAssetsStrip) norm = `assets/live/${pubAssetsStrip[1]}`;
   if (norm === "assets/live" || norm.startsWith("assets/live/")) {
     const sub = norm.slice("assets/live".length).replace(/^\/+/, "");
     const abs = path.resolve(liveRoot, sub);
@@ -89,6 +169,15 @@ function resolveVerifiedSiteFilePath(publicDir, liveRoot, relOrAbs) {
     if (relBack.startsWith("..") || path.isAbsolute(relBack)) {
       throw new Error("非法路径");
     }
+    return abs;
+  }
+
+  // 兼容旧 JSON：路径相对素材根（data/live）但未写 assets/live/ 前缀（如 _livp-external/…）
+  if (/^_(livp-external|admin-manual|admin-import)(\/|$)/.test(norm)) {
+    const abs = path.resolve(liveRoot, norm);
+    const live = path.resolve(liveRoot);
+    const relBack = path.relative(live, abs);
+    if (relBack.startsWith("..") || path.isAbsolute(relBack)) throw new Error("非法路径");
     return abs;
   }
 
@@ -305,6 +394,22 @@ function ensurePhotoTimelineSchema(db) {
   ensureTimelinePhotoBusinessColumns(db);
   migrateTimelineEntryBusinessModel(db);
   migrateGpsGridTruncateV2(db);
+}
+
+/**
+ * 打开可写库：若无目录或库文件则创建并套用 schema（与 sync CLI 一致），避免首次上传前必须先手动 sync。
+ * @param {string} serverDir
+ * @returns {{ db: import("better-sqlite3").Database; dbPath: string }}
+ */
+function openPhotoTimelineDbForWrite(serverDir) {
+  const dbPath = resolvePhotoTimelineDbPath(serverDir);
+  const dir = path.dirname(dbPath);
+  if (!fs.existsSync(dir)) {
+    fs.mkdirSync(dir, { recursive: true });
+  }
+  const db = new Database(dbPath);
+  ensurePhotoTimelineSchema(db);
+  return { db, dbPath };
 }
 
 /** 与 public/assets/scripts/photo-timeline-page.js 中 GEO_BUCKET_DECIMALS 一致 */
@@ -1717,7 +1822,7 @@ function writeEntryToSourceJsonFile(publicDir, serverDir, sourceRel, id, entry) 
 }
 
 /**
- * 时间轴写回（天气 / 地名）调试日志，默认 server/.data/photo-timeline-write.log
+ * 时间轴写回（天气 / 地名）调试日志：默认与 SQLite 同目录（见 resolvePhotoTimelineDbPath）。
  * 可通过环境变量 PHOTO_TIMELINE_WRITE_LOG 指定绝对路径或相对 server 目录的路径。
  */
 function getPhotoTimelineWriteLogPath(serverDir) {
@@ -1725,7 +1830,8 @@ function getPhotoTimelineWriteLogPath(serverDir) {
   if (custom) {
     return path.isAbsolute(custom) ? custom : path.join(serverDir, custom);
   }
-  return path.join(serverDir, ".data", "photo-timeline-write.log");
+  const dbDir = path.dirname(resolvePhotoTimelineDbPath(serverDir));
+  return path.join(dbDir, "photo-timeline-write.log");
 }
 
 function appendPhotoTimelineWriteLog(serverDir, message) {
@@ -1932,14 +2038,68 @@ export function assertPhotoTimelineSyncAuth(req, res) {
 }
 
 /**
+ * 递归收集目录下的 photo-timeline-entry.json。
+ * 使用 fs.statSync（跟随符号链接）判断是否目录：仅靠 Dirent.isSymbolicLink()/isDirectory()
+ * 在部分环境下对「目录软链」不一致，会导致跳过素材根下目录软链（如 `data/live/_livp-external`）。
+ * 用 realpath 记录已访问目录，避免链接成环。
+ *
+ * @param {string} rootAbs
+ * @param {string[]} errors
+ * @returns {string[]}
+ */
+function collectPhotoTimelineEntryJsonPaths(rootAbs, errors) {
+  const jsonFiles = [];
+  const visitedRealDirs = new Set();
+
+  function walk(dir) {
+    let dirReal;
+    try {
+      dirReal = fs.realpathSync(dir);
+    } catch (e) {
+      errors.push(String(dir) + ": " + (e && e.message));
+      return;
+    }
+    if (visitedRealDirs.has(dirReal)) return;
+    visitedRealDirs.add(dirReal);
+
+    let names;
+    try {
+      names = fs.readdirSync(dir, { withFileTypes: true });
+    } catch (e) {
+      errors.push(String(dir) + ": " + (e && e.message));
+      return;
+    }
+
+    for (const ent of names) {
+      const full = path.join(dir, ent.name);
+      let st;
+      try {
+        st = fs.statSync(full);
+      } catch (e) {
+        errors.push(String(full) + ": " + (e && e.message));
+        continue;
+      }
+      if (st.isDirectory()) {
+        walk(full);
+      } else if (st.isFile() && ent.name === "photo-timeline-entry.json") {
+        jsonFiles.push(full);
+      }
+    }
+  }
+
+  walk(rootAbs);
+  return jsonFiles;
+}
+
+/**
  * @param {{ publicDir: string; serverDir: string }} opts
  * @returns {{ scanned: number; upserted: number; errors: string[] }}
  */
 export function syncPhotoTimelineFromDisk(opts) {
   const publicDir = opts.publicDir;
   const serverDir = opts.serverDir;
-  const dataDir = path.join(serverDir, ".data");
-  const dbPath = path.join(dataDir, "photo-timeline.sqlite");
+  const dbPath = resolvePhotoTimelineDbPath(serverDir);
+  const dataDir = path.dirname(dbPath);
   const liveRoot = resolvePhotoTimelineLiveRoot(publicDir, serverDir);
 
   const errors = [];
@@ -1957,22 +2117,7 @@ export function syncPhotoTimelineFromDisk(opts) {
   const db = new Database(dbPath);
   ensurePhotoTimelineSchema(db);
 
-  const jsonFiles = [];
-  function walk(dir) {
-    let names;
-    try {
-      names = fs.readdirSync(dir, { withFileTypes: true });
-    } catch (e) {
-      errors.push(String(dir) + ": " + (e && e.message));
-      return;
-    }
-    for (const ent of names) {
-      const full = path.join(dir, ent.name);
-      if (ent.isDirectory()) walk(full);
-      else if (ent.name === "photo-timeline-entry.json") jsonFiles.push(full);
-    }
-  }
-  walk(liveRoot);
+  const jsonFiles = collectPhotoTimelineEntryJsonPaths(liveRoot, errors);
   scanned = jsonFiles.length;
 
   const now = new Date().toISOString();
@@ -1982,7 +2127,7 @@ export function syncPhotoTimelineFromDisk(opts) {
       const raw = fs.readFileSync(fp, "utf8");
       const data = JSON.parse(raw);
       const entries = Array.isArray(data.entries) ? data.entries : [];
-      const sourceRel = sourcePathForEntryJson(publicDir, fp);
+      const sourceRel = sourcePathForEntryJson(publicDir, serverDir, fp);
       for (const entry of entries) {
         if (!entry || !entry.date) {
           errors.push(`${fp}: 跳过无效条目（需要 date）`);
@@ -1997,7 +2142,7 @@ export function syncPhotoTimelineFromDisk(opts) {
   }
 
   db.close();
-  return { scanned, upserted, errors };
+  return { scanned, upserted, errors, liveRoot };
 }
 
 /**
@@ -2006,7 +2151,7 @@ export function syncPhotoTimelineFromDisk(opts) {
 export function readAllTimelineEntries(opts) {
   const serverDir = opts.serverDir;
   const sortDesc = opts.sortDesc !== false;
-  const dbPath = path.join(serverDir, ".data", "photo-timeline.sqlite");
+  const dbPath = resolvePhotoTimelineDbPath(serverDir);
   if (!fs.existsSync(dbPath)) {
     return [];
   }
@@ -2034,7 +2179,7 @@ export function readTimelineEntriesPage(opts) {
   const rawLimit = Math.floor(Number(opts.limit) || 5);
   const limit = Math.max(1, Math.min(1000, rawLimit));
   const filters = normalizeTimelineFilterOptions(opts);
-  const dbPath = path.join(serverDir, ".data", "photo-timeline.sqlite");
+  const dbPath = resolvePhotoTimelineDbPath(serverDir);
   if (!fs.existsSync(dbPath)) {
     return {
       entries: [],
@@ -2098,7 +2243,7 @@ export function readTimelineMapPoints(opts) {
   const serverDir = opts.serverDir;
   const sortDesc = opts.sortDesc !== false;
   const allowPrivate = opts.allowPrivate === true;
-  const dbPath = path.join(serverDir, ".data", "photo-timeline.sqlite");
+  const dbPath = resolvePhotoTimelineDbPath(serverDir);
   if (!fs.existsSync(dbPath)) {
     return { points: [], total: 0 };
   }
@@ -2118,20 +2263,44 @@ export function readTimelineMapPoints(opts) {
   const maps = loadChildMapsForEntryIds(db, ids);
   db.close();
 
-  let points = mainRows
-    .map((row) => assembleClientEntry(row, maps))
-    .map((entry) => {
+  const prepared = [];
+  for (const row of mainRows) {
+    const entry = assembleClientEntry(row, maps);
+    const coords = _readGpsCoords(entry.gps);
+    if (!coords) continue;
+    if (!isEntryVisibleForViewer(entry, allowPrivate)) continue;
+    const photos = Array.isArray(entry.photos) ? entry.photos.slice() : [];
+    const visiblePhotos = photos.filter((p) => {
+      if (!p || typeof p !== "object") return false;
+      const v = p.visibility != null ? String(p.visibility).toLowerCase() : "public";
+      if (v !== "private") return true;
+      return allowPrivate;
+    });
+    if (!visiblePhotos.length) continue;
+    prepared.push({ entry, visiblePhotos });
+  }
+
+  let guestPreviewTruncated = false;
+  let guestVisiblePhotoCount = 0;
+  let rows = prepared;
+  if (!allowPrivate) {
+    const forLimit = prepared.map(({ entry, visiblePhotos }) => ({
+      ...entry,
+      photos: visiblePhotos,
+    }));
+    const r = limitEntriesToPhotoCount(forLimit, GUEST_VISIBLE_PHOTO_LIMIT);
+    guestPreviewTruncated = r.truncated;
+    guestVisiblePhotoCount = r.photoCount;
+    rows = r.entries.map((e) => ({
+      entry: e,
+      visiblePhotos: Array.isArray(e.photos) ? e.photos : [],
+    }));
+  }
+
+  const points = rows
+    .map(({ entry, visiblePhotos }) => {
       const coords = _readGpsCoords(entry.gps);
       if (!coords) return null;
-      if (!isEntryVisibleForViewer(entry, allowPrivate)) return null;
-      const photos = Array.isArray(entry.photos) ? entry.photos.slice() : [];
-      const visiblePhotos = photos.filter((p) => {
-        if (!p || typeof p !== "object") return false;
-        const v = p.visibility != null ? String(p.visibility).toLowerCase() : "public";
-        if (v !== "private") return true;
-        return allowPrivate;
-      });
-      if (!visiblePhotos.length) return null;
       const cover = visiblePhotos.length ? visiblePhotos[0] : null;
       return {
         id: String(entry.id || ""),
@@ -2159,11 +2328,12 @@ export function readTimelineMapPoints(opts) {
     })
     .filter(Boolean);
 
-  if (!allowPrivate && points.length > GUEST_VISIBLE_PHOTO_LIMIT) {
-    points = points.slice(0, GUEST_VISIBLE_PHOTO_LIMIT);
-  }
-
-  return { points, total: points.length };
+  return {
+    points,
+    total: points.length,
+    guestPreviewTruncated,
+    guestVisiblePhotoCount,
+  };
 }
 
 function filterEntryPhotosByVisibility(entry, allowPrivate) {
@@ -2237,7 +2407,7 @@ export function readTimelinePhotosPage(opts) {
   const vis = String(opts.visibility || "").trim().toLowerCase();
   const evis = String(opts.entryVisibility || "").trim().toLowerCase();
 
-  const dbPath = path.join(serverDir, ".data", "photo-timeline.sqlite");
+  const dbPath = resolvePhotoTimelineDbPath(serverDir);
   if (!fs.existsSync(dbPath)) {
     return { items: [], total: 0, offset, limit, nextOffset: null };
   }
@@ -2354,10 +2524,7 @@ export function updateTimelinePhotosVisibilityBulk(opts) {
   if (!ids.length) throw new Error("photoIds 不能为空");
   const visibility = String(opts.visibility || "").trim().toLowerCase() === "private" ? "private" : "public";
 
-  const dbPath = path.join(serverDir, ".data", "photo-timeline.sqlite");
-  if (!fs.existsSync(dbPath)) throw new Error("database not found");
-  const db = new Database(dbPath);
-  ensurePhotoTimelineSchema(db);
+  const { db } = openPhotoTimelineDbForWrite(serverDir);
 
   const ph = ids.map(() => "?").join(",");
   const rows = db
@@ -2416,10 +2583,7 @@ export function updateTimelinePhotoMeta(opts) {
   const rawVis = patch.visibility != null ? String(patch.visibility) : "";
   const vis = rawVis.trim().toLowerCase() === "private" ? "private" : "public";
 
-  const dbPath = path.join(serverDir, ".data", "photo-timeline.sqlite");
-  if (!fs.existsSync(dbPath)) throw new Error("database not found");
-  const db = new Database(dbPath);
-  ensurePhotoTimelineSchema(db);
+  const { db } = openPhotoTimelineDbForWrite(serverDir);
 
   const row = db.prepare(`SELECT id, source_path FROM timeline_entries WHERE id = ?`).get(entryId);
   if (!row) {
@@ -2482,10 +2646,7 @@ export async function suggestTimelinePhotoSemanticFromAI(opts) {
   const model = getPhotoTimelineVisionModel();
   if (!model) throw new Error("未配置 PHOTO_TIMELINE_VISION_MODEL");
 
-  const dbPath = path.join(serverDir, ".data", "photo-timeline.sqlite");
-  if (!fs.existsSync(dbPath)) throw new Error("database not found");
-  const db = new Database(dbPath);
-  ensurePhotoTimelineSchema(db);
+  const { db } = openPhotoTimelineDbForWrite(serverDir);
 
   const row = db
     .prepare(
@@ -2877,12 +3038,7 @@ export function patchTimelineEntryOnDisk(opts) {
     throw new Error("patch must include weather or gps");
   }
 
-  const dbPath = path.join(serverDir, ".data", "photo-timeline.sqlite");
-  if (!fs.existsSync(dbPath)) {
-    throw new Error("database not found");
-  }
-  const db = new Database(dbPath);
-  ensurePhotoTimelineSchema(db);
+  const { db } = openPhotoTimelineDbForWrite(serverDir);
   const row = db.prepare("SELECT source_path FROM timeline_entries WHERE id = ?").get(id);
   if (!row) {
     db.close();
@@ -3018,12 +3174,7 @@ export async function resolveLocationLabelsForIds(opts) {
   const ids = [...new Set((opts.ids || []).map(String).filter(Boolean))];
   if (ids.length === 0) throw new Error("no ids");
 
-  const dbPath = path.join(serverDir, ".data", "photo-timeline.sqlite");
-  if (!fs.existsSync(dbPath)) {
-    throw new Error("database not found");
-  }
-  const db = new Database(dbPath);
-  ensurePhotoTimelineSchema(db);
+  const { db } = openPhotoTimelineDbForWrite(serverDir);
   let coords = null;
   for (const id of ids) {
     const row = db.prepare("SELECT latitude, longitude FROM entry_gps WHERE entry_id = ?").get(id);
@@ -3168,14 +3319,9 @@ function buildResolvedLabelIndexes(db) {
  */
 export async function resolveMissingLocationLabels(opts) {
   const { publicDir, serverDir } = opts;
-  const dbPath = path.join(serverDir, ".data", "photo-timeline.sqlite");
-  if (!fs.existsSync(dbPath)) {
-    throw new Error("database not found");
-  }
   const limit = Math.max(0, Math.floor(Number(opts.limit) || 0));
   const dryRun = !!opts.dryRun;
-  const db = new Database(dbPath);
-  ensurePhotoTimelineSchema(db);
+  const { db } = openPhotoTimelineDbForWrite(serverDir);
   const missingRows = listEntriesMissingLocationLabels(db);
   const groups = groupMissingLocationRows(missingRows);
   const labelIndexes = buildResolvedLabelIndexes(db);
@@ -3264,7 +3410,7 @@ export async function resolveMissingLocationLabels(opts) {
  * @param {string} id
  */
 export function getTimelineEntryById(serverDir, id) {
-  const dbPath = path.join(serverDir, ".data", "photo-timeline.sqlite");
+  const dbPath = resolvePhotoTimelineDbPath(serverDir);
   if (!fs.existsSync(dbPath)) return null;
   const db = new Database(dbPath);
   ensurePhotoTimelineSchema(db);
@@ -3292,10 +3438,7 @@ export function updateTimelineEntryMeta(opts) {
     throw new Error("patch must include title, place, note, tags, date, gps, or visibility");
   }
 
-  const dbPath = path.join(serverDir, ".data", "photo-timeline.sqlite");
-  if (!fs.existsSync(dbPath)) throw new Error("database not found");
-  const db = new Database(dbPath);
-  ensurePhotoTimelineSchema(db);
+  const { db } = openPhotoTimelineDbForWrite(serverDir);
   let currentId = String(id);
   const row = db
     .prepare(
@@ -3468,10 +3611,7 @@ export function deleteTimelineEntry(opts) {
   const entryId = String(id || "").trim();
   if (!entryId) throw new Error("invalid id");
 
-  const dbPath = path.join(serverDir, ".data", "photo-timeline.sqlite");
-  if (!fs.existsSync(dbPath)) throw new Error("database not found");
-  const db = new Database(dbPath);
-  ensurePhotoTimelineSchema(db);
+  const { db } = openPhotoTimelineDbForWrite(serverDir);
   const row = db
     .prepare(`SELECT id, source_path FROM timeline_entries WHERE id = ?`)
     .get(entryId);
@@ -3512,10 +3652,7 @@ export function deleteTimelinePhoto(opts) {
   if (!entryId) throw new Error("invalid entryId");
   if (!Number.isFinite(photoId) || photoId <= 0) throw new Error("invalid photoId");
 
-  const dbPath = path.join(serverDir, ".data", "photo-timeline.sqlite");
-  if (!fs.existsSync(dbPath)) throw new Error("database not found");
-  const db = new Database(dbPath);
-  ensurePhotoTimelineSchema(db);
+  const { db } = openPhotoTimelineDbForWrite(serverDir);
 
   const row = db.prepare(`SELECT id, source_path FROM timeline_entries WHERE id = ?`).get(entryId);
   if (!row) {
@@ -3693,20 +3830,7 @@ export function createTimelineEntryFromAdmin(opts) {
       }
 
       // 读取工具生成的 photo-timeline-entry.json，从中提取 photos；随后删除该文件避免被 sync 扫到重复入库
-      const createdJsonFiles = [];
-      (function walk(dir) {
-        let ents = [];
-        try {
-          ents = fs.readdirSync(dir, { withFileTypes: true });
-        } catch {
-          return;
-        }
-        for (const ent of ents) {
-          const full = path.join(dir, ent.name);
-          if (ent.isDirectory()) walk(full);
-          else if (ent.name === "photo-timeline-entry.json") createdJsonFiles.push(full);
-        }
-      })(importAbsRoot);
+      const createdJsonFiles = collectPhotoTimelineEntryJsonPaths(importAbsRoot, []);
 
       if (!createdJsonFiles.length) throw new Error("livp 处理完成，但未生成 photo-timeline-entry.json");
       const jsonPath = createdJsonFiles[0];
@@ -3814,10 +3938,7 @@ export function createTimelineEntryFromAdmin(opts) {
   }
 
   const { sourceRel } = ensureAdminManualEntryJson(publicDir, serverDir);
-  const dbPath = path.join(serverDir, ".data", "photo-timeline.sqlite");
-  if (!fs.existsSync(dbPath)) throw new Error("database not found");
-  const db = new Database(dbPath);
-  ensurePhotoTimelineSchema(db);
+  const { db } = openPhotoTimelineDbForWrite(serverDir);
   const now = new Date().toISOString();
   const run = db.transaction(() => {
     upsertNormalizedEntryFromObject(db, entry, sourceRel, now);
@@ -3845,12 +3966,7 @@ export function createTimelineEntryFromAdmin(opts) {
  */
 async function fetchWeatherAndPersistForTimelineEntry(opts) {
   const { publicDir, serverDir, id } = opts;
-  const dbPath = path.join(serverDir, ".data", "photo-timeline.sqlite");
-  if (!fs.existsSync(dbPath)) {
-    throw new Error("database not found");
-  }
-  const db = new Database(dbPath);
-  ensurePhotoTimelineSchema(db);
+  const { db } = openPhotoTimelineDbForWrite(serverDir);
   const entry = readOneTimelineEntry(db, String(id));
   if (!entry) {
     db.close();
@@ -3897,12 +4013,84 @@ async function fetchWeatherAndPersistForTimelineEntry(opts) {
   return { weather, entries, entry: primary };
 }
 
+/**
+ * 检测条目列表请求是否带有效全文搜索关键词（重复 ?q= 时 Express 可能给出数组）。
+ * @param {string | string[] | import("express").QueryString.ParsedQs | import("express").QueryString.ParsedQs[] | undefined} q
+ */
+function photoTimelineRequestHasSearchQuery(q) {
+  if (q == null) return false;
+  if (Array.isArray(q)) {
+    return q.some((item) => {
+      if (item == null) return false;
+      if (typeof item === "object") return false;
+      return String(item).trim() !== "";
+    });
+  }
+  if (typeof q === "object") return false;
+  return String(q).trim() !== "";
+}
+
+/** @param {string | string[] | undefined} tag */
+function photoTimelineRequestHasTags(tag) {
+  if (tag == null) return false;
+  const arr = Array.isArray(tag) ? tag : [tag];
+  return arr.some((t) => {
+    if (t == null) return false;
+    if (typeof t === "object") return false;
+    return String(t).trim() !== "";
+  });
+}
+
+/** @param {string | string[] | undefined} anchor */
+function photoTimelineRequestHasAnchorDate(anchor) {
+  if (anchor == null) return false;
+  const arr = Array.isArray(anchor) ? anchor : [anchor];
+  return arr.some((a) => {
+    if (a == null) return false;
+    if (typeof a === "object") return false;
+    return String(a).trim() !== "";
+  });
+}
+
+/** 未登录访客仅允许 offset=0、新到旧排序、无筛选条件的首次列表（与前台「仅默认加载」一致）。 */
+function photoTimelineEntriesRequestIsGuestDefaultList(req) {
+  const offset = Math.max(0, Math.floor(Number(req.query.offset) || 0));
+  if (offset !== 0) return false;
+  const sortRaw = req.query.sort;
+  const sort = String(Array.isArray(sortRaw) ? sortRaw[0] : sortRaw || "desc").toLowerCase();
+  if (sort !== "desc") return false;
+  if (photoTimelineRequestHasSearchQuery(req.query.q)) return false;
+  if (photoTimelineRequestHasTags(req.query.tag)) return false;
+  if (photoTimelineRequestHasAnchorDate(req.query.anchorDate)) return false;
+  return true;
+}
+
 /** @param {import("express").Application} app */
 export function registerPhotoTimelineRoutes(app, opts) {
   const publicDir = opts.publicDir;
   const serverDir = opts.serverDir;
   const rootDir = opts.rootDir;
   const liveRoot = resolvePhotoTimelineLiveRoot(publicDir, serverDir);
+  const uploadRootForTimeline = resolvePhotoTimelineUploadRoot(serverDir, {
+    uploadPhotosRoot: opts && opts.uploadPhotosRoot,
+  });
+  try {
+    fs.mkdirSync(uploadRootForTimeline, { recursive: true });
+  } catch (_) {}
+  photoTimelineUploadAbsRoot = uploadRootForTimeline;
+
+  /** @returns {boolean} true 表示已响应 401，调用方应 return */
+  function rejectPhotoTimelineUnlessLoggedIn(req, res) {
+    const userAuth = getUserAuthConfig();
+    if (!userAuth.enabled) return false;
+    if (isUserLoggedIn(req)) return false;
+    res.status(401).json({
+      ok: false,
+      error: "未登录不可使用此接口",
+      code: "PHOTO_TIMELINE_LOGIN_REQUIRED",
+    });
+    return true;
+  }
 
   app.get("/api/photo-timeline/session", function (req, res) {
     const auth = getUserAuthConfig();
@@ -3942,11 +4130,11 @@ export function registerPhotoTimelineRoutes(app, opts) {
       const r = syncPhotoTimelineFromDisk({ publicDir, serverDir });
       appendPhotoTimelineWriteLog(
         serverDir,
-        `sync OK scanned=${r.scanned} upserted=${r.upserted} errors=${(r.errors && r.errors.length) || 0}`
+        `sync OK liveRoot=${liveRoot} scanned=${r.scanned} upserted=${r.upserted} errors=${(r.errors && r.errors.length) || 0}`
       );
       res.json({
         ok: true,
-        liveRoot: path.relative(rootDir, liveRoot),
+        liveRoot: path.relative(rootDir, r.liveRoot || liveRoot),
         scanned: r.scanned,
         upserted: r.upserted,
         errors: r.errors,
@@ -3962,6 +4150,18 @@ export function registerPhotoTimelineRoutes(app, opts) {
 
   app.get("/api/photo-timeline/entries", function (req, res) {
     try {
+      const userAuth = getUserAuthConfig();
+      if (
+        userAuth.enabled &&
+        !isUserLoggedIn(req) &&
+        !photoTimelineEntriesRequestIsGuestDefaultList(req)
+      ) {
+        res.status(401).json({
+          error: "未登录仅可浏览默认时间轴，登录后可筛选、搜索与加载更多",
+          code: "TIMELINE_GUEST_DEFAULT_ONLY",
+        });
+        return;
+      }
       const sort = String(req.query.sort || "desc").toLowerCase();
       const sortDesc = sort !== "asc";
       const allowPrivate = isUserLoggedIn(req);
@@ -4036,14 +4236,21 @@ export function registerPhotoTimelineRoutes(app, opts) {
 
   app.get("/api/photo-timeline/map-points", function (req, res) {
     try {
+      const userAuth = getUserAuthConfig();
+      const loggedIn = !!(userAuth.enabled && isUserLoggedIn(req));
       const sort = String(req.query.sort || "desc").toLowerCase();
       const sortDesc = sort !== "asc";
-      const allowPrivate = isUserLoggedIn(req);
+      const allowPrivate = loggedIn;
       const result = readTimelineMapPoints({ serverDir, sortDesc, allowPrivate });
+      const guestMode = userAuth.enabled && !loggedIn;
       res.json({
         ok: true,
         total: result.total,
         points: result.points,
+        loggedIn,
+        guestVisiblePhotoLimit: guestMode ? GUEST_VISIBLE_PHOTO_LIMIT : null,
+        guestVisiblePhotoCount: guestMode ? result.guestVisiblePhotoCount : null,
+        guestPreviewTruncated: guestMode ? !!result.guestPreviewTruncated : false,
       });
     } catch (err) {
       res.status(500).json({ ok: false, error: String(err && err.message) });
@@ -4103,6 +4310,7 @@ export function registerPhotoTimelineRoutes(app, opts) {
   app.post("/api/photo-timeline/entry/:id/update", handleTimelineEntryPatch);
 
   app.get("/api/photo-timeline/weather", async function (req, res) {
+    if (rejectPhotoTimelineUnlessLoggedIn(req, res)) return;
     try {
       const lat = Number(req.query.lat);
       const lng = Number(req.query.lng);
@@ -4125,6 +4333,7 @@ export function registerPhotoTimelineRoutes(app, opts) {
 
   /** API 模式：服务端拉取天气并写库，浏览器不必带 sync secret */
   app.post("/api/photo-timeline/entry/:id/fetch-weather", async function (req, res) {
+    if (rejectPhotoTimelineUnlessLoggedIn(req, res)) return;
     const entryId = String(req.params.id || "").trim();
     if (!entryId) {
       return res.status(400).json({ ok: false, error: "缺少条目 id" });
@@ -4158,6 +4367,7 @@ export function registerPhotoTimelineRoutes(app, opts) {
 
   /** API 模式：服务端逆地理（高德）并写 gps.label，浏览器不必带 sync secret（与 fetch-weather 一致） */
   app.post("/api/photo-timeline/entry/:id/resolve-location", async function (req, res) {
+    if (rejectPhotoTimelineUnlessLoggedIn(req, res)) return;
     try {
       const also = Array.isArray(req.body?.alsoEntryIds) ? req.body.alsoEntryIds : [];
       const ids = [...new Set([String(req.params.id || ""), ...also.map(String)])].filter(Boolean);

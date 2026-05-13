@@ -30,6 +30,15 @@ export default defineConfig({
         target: `http://127.0.0.1:${apiTargetPort}`,
         changeOrigin: true,
       },
+      // 素材库默认在仓库根 data/live，由 Node 挂载 /assets/live；开发时须转发，否则会误从 public/ 找文件
+      "/assets/live": {
+        target: `http://127.0.0.1:${apiTargetPort}`,
+        changeOrigin: true,
+      },
+      "/uploadphotos": {
+        target: `http://127.0.0.1:${apiTargetPort}`,
+        changeOrigin: true,
+      },
     },
   },
 });

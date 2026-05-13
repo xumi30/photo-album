@@ -103,6 +103,13 @@ a { color: inherit; }
   letter-spacing: 0.02em;
 }
 
+.map-guest-hint {
+  margin: 8px 0 0;
+  font: 400 0.72rem/1.45 "Noto Sans SC", sans-serif;
+  color: var(--ink-muted);
+  letter-spacing: 0.02em;
+}
+
 #mapSearchInput {
   width: 100%;
   padding: 10px 12px;

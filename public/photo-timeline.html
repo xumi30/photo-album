@@ -18,6 +18,7 @@
   </head>
   <body>
     <div class="corner-actions" aria-label="用户操作">
+      <a class="corner-actions__pill" href="./photo-upload.html">上传</a>
       <button type="button" id="userAuthBtn">登录</button>
     </div>
 
@@ -52,30 +53,40 @@
 
     <main class="page">
 
-      <section class="filter-section">
-        <div class="filter-bar">
+      <section class="filter-section" aria-label="筛选与跳转">
+        <div class="filter-section__controls">
           <input
             id="searchInput"
+            class="filter-section__search"
             type="search"
             aria-label="搜索关键词"
-            placeholder="搜索地名、备注、标签…"
+            placeholder="地名、备注、标签…"
           />
-          <select id="sortSelect" aria-label="时间排序">
-            <option value="desc">时间 · 从新到旧</option>
-            <option value="asc">时间 · 从旧到新</option>
-          </select>
-          <input id="jumpDateInput" type="date" aria-label="跳到日期" />
-          <button type="button" id="jumpDateBtn">跳到这天</button>
-        </div>
-        <div class="chips" id="tagWrap"></div>
-        <div class="filter-meta">
-          <span id="countText">加载中…</span>
-          <div class="filter-meta__actions">
-            <a class="filter-meta__link" href="./photo-map.html" target="_blank" rel="noopener noreferrer">地图分布</a>
-            <button type="button" id="clearBtn">清空筛选</button>
+          <div class="filter-section__cluster">
+            <select id="sortSelect" aria-label="时间排序">
+              <option value="desc">最新优先</option>
+              <option value="asc">最早优先</option>
+            </select>
+            <input id="jumpDateInput" type="date" aria-label="跳到日期" />
+            <button type="button" id="clearBtn">清空</button>
           </div>
         </div>
-        <div class="year-jump" id="yearJumpWrap" aria-label="按年份跳转"></div>
+        <div class="filter-section__chips chips" id="tagWrap"></div>
+        <div class="filter-section__footer">
+          <span id="countText" class="filter-meta__count">加载中…</span>
+          <div class="year-jump" id="yearJumpWrap" aria-label="按年份跳转"></div>
+          <nav class="filter-meta__actions" aria-label="快捷链接">
+            <a class="filter-meta__link" href="./photo-upload.html">上传</a>
+            <span class="filter-meta__sep" aria-hidden="true">·</span>
+            <a
+              class="filter-meta__link"
+              href="./photo-map.html"
+              target="_blank"
+              rel="noopener noreferrer"
+              >痕迹</a
+            >
+          </nav>
+        </div>
       </section>
 
       <section class="timeline" id="timeline"></section>

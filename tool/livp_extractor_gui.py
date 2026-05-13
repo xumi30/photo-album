@@ -25,7 +25,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import livp_extractor as core
 
 _REPO_ROOT = Path(__file__).resolve().parent.parent
-_DEFAULT_PUBLIC_LIVE = _REPO_ROOT / "public" / "assets" / "live"
+_DEFAULT_LIVE_ROOT = _REPO_ROOT / "data" / "live"
 _EXTERNAL_LIVE_LINK = "_livp-external"
 
 # ---------------------------------------------------------------------------
@@ -33,7 +33,7 @@ _EXTERNAL_LIVE_LINK = "_livp-external"
 # ---------------------------------------------------------------------------
 
 state = {
-    "output_dir": str(_DEFAULT_PUBLIC_LIVE),
+    "output_dir": str(_DEFAULT_LIVE_ROOT),
     "is_running": False,
     "progress": 0,
     "status": "Ready",
@@ -184,14 +184,14 @@ def _is_subpath(path: Path, parent: Path) -> bool:
 
 def _ensure_live_symlink_for_external_output(output_dir: Path, logger: logging.Logger) -> Optional[str]:
     """
-    外部输出目录场景：在 public/assets/live 下创建软链接，前端通过 /assets/live/<link>/... 访问。
+    外部输出目录场景：在 data/live 下创建软链接，前端通过 /assets/live/<link>/... 访问。
     返回 web_prefix 覆盖值（如 assets/live/_livp-external）或 None（不需要覆盖）。
     """
-    if _is_subpath(output_dir, _DEFAULT_PUBLIC_LIVE):
+    if _is_subpath(output_dir, _DEFAULT_LIVE_ROOT):
         return None
 
-    _DEFAULT_PUBLIC_LIVE.mkdir(parents=True, exist_ok=True)
-    link_path = _DEFAULT_PUBLIC_LIVE / _EXTERNAL_LIVE_LINK
+    _DEFAULT_LIVE_ROOT.mkdir(parents=True, exist_ok=True)
+    link_path = _DEFAULT_LIVE_ROOT / _EXTERNAL_LIVE_LINK
     try:
         if link_path.exists() or link_path.is_symlink():
             if link_path.is_symlink() or link_path.is_file():
@@ -782,7 +782,7 @@ HTML_PAGE = r"""<!DOCTYPE html>
 <div class="card">
   <div class="card-title">输出 · 保存目录</div>
   <div class="row">
-    <input id="outputDir" class="text" type="text" spellcheck="false" placeholder="仓库内 public/assets/live">
+    <input id="outputDir" class="text" type="text" spellcheck="false" placeholder="仓库内 data/live">
     <button type="button" class="btn-secondary" onclick="useDefaultOutput()">默认</button>
     <button type="button" class="btn-secondary" onclick="openOutput()">打开目录</button>
   </div>
@@ -809,7 +809,7 @@ HTML_PAGE = r"""<!DOCTYPE html>
   </div>
 
   <div class="timeline-note">
-    默认已指向仓库内 <code>public/assets/live/</code>，与站点静态路径一致。提取结束后会<strong>自动</strong>在本机执行 <code>node server/photo-timeline-cli.mjs</code> 写入 SQLite（需已安装 Node，且输出目录在仓库内以便找到脚本）。输出到桌面等目录时不会自动同步，可手动点下方「同步数据库」或运行 <code>npm run sync-photo-timeline</code>。
+    默认已指向仓库内 <code>data/live/</code>（与代码分离），站点仍以 <code>/assets/live/…</code> 访问。提取结束后会<strong>自动</strong>在本机执行 <code>node server/photo-timeline-cli.mjs</code> 写入 SQLite（需已安装 Node，且输出目录在仓库内以便找到脚本）。输出到桌面等目录时不会自动同步，可手动点下方「同步数据库」或运行 <code>npm run sync-photo-timeline</code>。
   </div>
 </div>
 
@@ -1264,7 +1264,7 @@ class Handler(BaseHTTPRequestHandler):
                 return
 
             # 扫描时始终按扫描目录重算平级输出目录，并回填到页面。
-            # 这样不会被输入框里旧值（如 public/assets/live）阻断。
+            # 这样不会被输入框里旧值（如 data/live）阻断。
             output_dir = _suggest_output_dir_for_scan_folder(folder_path)
             logging.info(f"扫描自动输出目录(平级): {output_dir}")
 
@@ -1434,7 +1434,7 @@ class Handler(BaseHTTPRequestHandler):
         output_dir = os.path.abspath(output_dir)
         output_path = Path(output_dir)
 
-        # 外部目录自动软链接到 public/assets/live，避免移动媒体文件。
+        # 外部目录自动软链接到 data/live，避免移动媒体文件。
         live_prefix_override = _ensure_live_symlink_for_external_output(output_path, logging.getLogger("livp_extractor"))
         if live_prefix_override:
             web_prefix = live_prefix_override

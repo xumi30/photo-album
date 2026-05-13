@@ -7,6 +7,7 @@
   const statTotal = document.getElementById("statTotal");
   const statVisible = document.getElementById("statVisible");
   const statPlaces = document.getElementById("statPlaces");
+  const mapGuestHint = document.getElementById("mapGuestHint");
 
   const state = {
     allPoints: [],
@@ -84,6 +85,37 @@
 
   const resolveUrl = (path) => new URL(path, window.location.href).toString();
 
+  const sitePathPrefix = () => {
+    try {
+      const p = window.location.pathname || "";
+      if (p.startsWith("/photo-album/")) return "/photo-album";
+    } catch (_) {
+      /* ignore */
+    }
+    return "";
+  };
+
+  const toSiteMediaUrl = (u) => {
+    let s = String(u || "").trim();
+    if (!s) return s;
+    s = s.replace(/\\/g, "/");
+    const base = sitePathPrefix();
+    const noLead = s.replace(/^\/+/, "");
+    if (
+      !/^assets\/live(\/|$)/i.test(noLead) &&
+      !/^uploadphotos\//i.test(noLead) &&
+      !/^(https?:|data:)/i.test(noLead)
+    ) {
+      if (/^_(livp-external|admin-manual|admin-import)(\/|$)/i.test(noLead)) {
+        s = `assets/live/${noLead}`;
+      }
+    }
+    if (/^uploadphotos\//i.test(s)) return `${base}/${s.replace(/^\/+/, "")}`;
+    if (/^\/assets\/live(\/|$)/i.test(s)) return `${base}${s}`;
+    if (/^assets\/live(\/|$)/i.test(s)) return `${base}/${s.replace(/^\/+/, "")}`;
+    return s;
+  };
+
   const escapeHtml = (value) =>
     String(value == null ? "" : value).replace(/[&<>"']/g, function (ch) {
       if (ch === "&") return "&amp;";
@@ -132,7 +164,9 @@
     `./photo-timeline.html#entry=${encodeURIComponent(point.id)}`;
 
   const buildInfoHtml = (point) => {
-    const cover = point.cover && (point.cover.thumb || point.cover.src) ? point.cover.thumb || point.cover.src : "";
+    const coverRaw =
+      point.cover && (point.cover.thumb || point.cover.src) ? point.cover.thumb || point.cover.src : "";
+    const cover = toSiteMediaUrl(coverRaw);
     const title = point.title || point.gps.label || point.date || "照片";
     const meta = [point.date, point.gps.label || point.place || "", `${point.photoCount || 0} 张照片`]
       .filter(Boolean)
@@ -175,7 +209,9 @@
       btn.className = "map-point-item";
       btn.addEventListener("click", () => openPoint(point));
 
-      const coverUrl = point.cover && (point.cover.thumb || point.cover.src) ? point.cover.thumb || point.cover.src : "";
+      const coverUrlRaw =
+        point.cover && (point.cover.thumb || point.cover.src) ? point.cover.thumb || point.cover.src : "";
+      const coverUrl = toSiteMediaUrl(coverUrlRaw);
       if (coverUrl) {
         const img = document.createElement("img");
         img.src = coverUrl;
@@ -284,6 +320,26 @@
     state.filteredPoints = state.allPoints.slice();
     updateStats();
     renderList();
+
+    if (mapGuestHint) {
+      mapGuestHint.hidden = true;
+      mapGuestHint.textContent = "";
+    }
+    if (
+      mapGuestHint &&
+      !pointData.loggedIn &&
+      Number(pointData.guestVisiblePhotoLimit) > 0
+    ) {
+      const lim = Number(pointData.guestVisiblePhotoLimit);
+      let msg = `未登录：痕迹仅展示至多 ${lim} 张照片范围内的点位（与时间轴限额一致）`;
+      const cnt = pointData.guestVisiblePhotoCount;
+      if (cnt != null && Number.isFinite(Number(cnt))) {
+        msg += ` · 当前约 ${Number(cnt)} 张`;
+      }
+      if (pointData.guestPreviewTruncated) msg += " · 已达预览上限";
+      mapGuestHint.textContent = msg;
+      mapGuestHint.hidden = false;
+    }
 
     if (!state.allPoints.length) {
       emptyEl.hidden = false;

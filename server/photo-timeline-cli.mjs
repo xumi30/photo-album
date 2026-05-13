@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// 扫描 public/assets/live 下各子目录中的 photo-timeline-entry.json，写入 SQLite。
+// 扫描默认素材根 data/live（或 PHOTO_TIMELINE_LIVE_ROOT）下的 photo-timeline-entry.json，写入 SQLite。
 // 用法:
 //   node server/photo-timeline-cli.mjs
 //   node server/photo-timeline-cli.mjs resolve-missing-locations [--dry-run] [--limit=50]
@@ -38,6 +38,10 @@ if (command === "resolve-missing-locations") {
   }
 } else {
   const r = syncPhotoTimelineFromDisk({ publicDir, serverDir });
+  console.log("素材根目录 (resolvePhotoTimelineLiveRoot):", r.liveRoot);
+  console.log(
+    "提示: 若 server/.env 配置了 PHOTO_TIMELINE_LIVE_ROOT，只扫描该路径；未包含默认 data/live 时，其中的软链接也不会被扫到。"
+  );
   console.log("扫描 JSON 文件数:", r.scanned);
   console.log("写入/更新条目数:", r.upserted);
   if (r.errors.length) {

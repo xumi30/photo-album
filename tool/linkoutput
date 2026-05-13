@@ -1,0 +1,6 @@
+#!/usr/bin/env bash
+# 用法: ./tool/linkoutput /path/to/livp_output
+# 或:   bash tool/linkoutput ~/Pictures/foo_livp_output
+set -euo pipefail
+ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+exec python3 "$ROOT/tool/linkoutput.py" "$@"

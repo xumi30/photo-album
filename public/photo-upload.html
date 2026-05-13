@@ -1,0 +1,144 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+    <meta name="color-scheme" content="light" />
+    <title>上传照片 · 相册</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Noto+Sans+SC:wght@400;500;600&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="stylesheet" href="./assets/styles/photo-upload.css" />
+  </head>
+  <body>
+    <div class="diffuse" aria-hidden="true"></div>
+
+    <header class="top">
+      <div class="top__text">
+        <h1 class="top__title">上传照片</h1>
+        <p class="top__hint">
+          文件保存在站点根目录 <code>uploadphotos</code>。未填写日期、坐标时，将尽可能从照片 EXIF 读取；若无 EXIF，日期默认为今天。
+        </p>
+      </div>
+      <nav class="top__nav">
+        <a href="./photo-timeline.html">时间轴</a>
+        <a href="./admin-photo-timeline.html">后台</a>
+      </nav>
+    </header>
+
+    <main class="sheet">
+      <form id="uploadForm" class="form">
+        <label class="field">
+          <span class="field__label">选择图片</span>
+          <input id="fileInput" name="files" type="file" accept="image/jpeg,image/png,image/webp,image/gif" multiple required />
+          <span class="field__help">可多选。单次最多 24 张，单张约 48MB 内。</span>
+        </label>
+
+        <div id="preview" class="preview" hidden></div>
+
+        <div class="field-row">
+          <label class="field field--half">
+            <span class="field__label">日期</span>
+            <input id="fieldDate" name="date" type="date" autocomplete="off" />
+          </label>
+          <label class="field field--half">
+            <span class="field__label">时间</span>
+            <input id="fieldTime" name="time" type="time" autocomplete="off" />
+          </label>
+        </div>
+
+        <fieldset class="fieldset">
+          <legend class="fieldset__legend">位置（可选）</legend>
+          <div class="field-row field-row--gps">
+            <label class="field field--half">
+              <span class="field__label">纬度</span>
+              <input id="fieldLat" name="lat" type="text" inputmode="decimal" placeholder="如 39.9042" autocomplete="off" />
+            </label>
+            <label class="field field--half">
+              <span class="field__label">经度</span>
+              <input id="fieldLng" name="lng" type="text" inputmode="decimal" placeholder="如 116.4074" autocomplete="off" />
+            </label>
+          </div>
+          <div class="row-actions">
+            <button type="button" id="btnGeo" class="btn btn--ghost">使用当前定位</button>
+            <span id="geoStatus" class="inline-status" role="status"></span>
+          </div>
+          <label class="field">
+            <span class="field__label">地点文案</span>
+            <input id="fieldPlace" name="place" type="text" placeholder="简短地点描述" autocomplete="off" />
+          </label>
+          <label class="field">
+            <span class="field__label">地图标注（有 GPS 时可选）</span>
+            <input id="fieldGpsLabel" name="gpsLabel" type="text" placeholder="写入地名标签，可与后台「解析地名」配合" autocomplete="off" />
+          </label>
+        </fieldset>
+
+        <label class="field">
+          <span class="field__label">标题</span>
+          <input id="fieldTitle" name="title" type="text" placeholder="留空则用「日期 + 时间」" autocomplete="off" />
+        </label>
+
+        <label class="field">
+          <span class="field__label">标签</span>
+          <input id="fieldTags" name="tags" type="text" placeholder="逗号分隔，如：旅行, 海边" autocomplete="off" />
+        </label>
+
+        <label class="field">
+          <span class="field__label">备注</span>
+          <textarea id="fieldNote" name="note" rows="3" placeholder="可选"></textarea>
+        </label>
+
+        <label class="check">
+          <input id="fieldPrivate" name="private" type="checkbox" value="1" />
+          <span>仅自己可见（private）</span>
+        </label>
+
+        <div class="form-actions">
+          <button type="submit" id="btnSubmit" class="btn btn--primary">上传并写入时间轴</button>
+        </div>
+
+        <p id="formMsg" class="form-msg" role="status"></p>
+      </form>
+    </main>
+
+    <div
+      id="authOverlay"
+      class="auth-overlay"
+      hidden
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="authOverlayTitle"
+    >
+      <div class="auth-card">
+        <h2 id="authOverlayTitle" class="auth-card__title">后台验证</h2>
+        <p class="auth-card__hint">
+          上传照片需校验与管理后台相同的密钥（服务器 <code>ADMIN_SECRET</code>）。
+        </p>
+        <form id="authGateForm" class="auth-card__form">
+          <label class="field">
+            <span class="field__label">密钥</span>
+            <input
+              id="authSecretInput"
+              name="secret"
+              type="password"
+              autocomplete="current-password"
+              placeholder="粘贴 ADMIN_SECRET"
+            />
+          </label>
+          <p id="authOverlayMsg" class="auth-card__msg" role="status"></p>
+          <button type="submit" id="authVerifyBtn" class="btn btn--primary auth-card__submit">
+            验证并继续
+          </button>
+        </form>
+        <p class="auth-card__footer">
+          <a href="./admin-photo-timeline.html">前往后台登录</a>
+        </p>
+      </div>
+    </div>
+
+    <script type="module" src="./assets/scripts/photo-upload-page.js"></script>
+  </body>
+</html>

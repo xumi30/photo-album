@@ -1,4 +1,5 @@
 import path from "node:path";
+import fs from "node:fs";
 import { fileURLToPath } from "node:url";
 import dotenv from "dotenv";
 import express from "express";
@@ -30,16 +31,29 @@ app.use(express.json({ limit: "16mb" }));
 
 function resolvePhotoTimelineLiveRoot() {
   const raw = String(process.env.PHOTO_TIMELINE_LIVE_ROOT || "").trim();
-  if (!raw) return path.join(publicDir, "assets", "live");
+  if (!raw) return path.join(rootDir, "data", "live");
   if (path.isAbsolute(raw)) return raw;
   return path.resolve(rootDir, raw);
 }
 
 const liveRoot = resolvePhotoTimelineLiveRoot();
+const uploadPhotosRoot = path.join(rootDir, "uploadphotos");
+try {
+  fs.mkdirSync(uploadPhotosRoot, { recursive: true });
+} catch (_) {}
+try {
+  fs.mkdirSync(liveRoot, { recursive: true });
+} catch (_) {}
 app.use("/assets/live", express.static(liveRoot, { fallthrough: true }));
+app.use("/uploadphotos", express.static(uploadPhotosRoot, { fallthrough: true, index: false }));
 
-registerPhotoTimelineRoutes(app, { publicDir, serverDir: __dirname, rootDir });
-registerAdminPhotoTimelineRoutes(app, { publicDir, serverDir: __dirname });
+registerPhotoTimelineRoutes(app, {
+  publicDir,
+  serverDir: __dirname,
+  rootDir,
+  uploadPhotosRoot,
+});
+registerAdminPhotoTimelineRoutes(app, { publicDir, serverDir: __dirname, uploadPhotosRoot });
 
 app.use(express.static(publicDir, { index: "index.html", extensions: ["html"] }));
 

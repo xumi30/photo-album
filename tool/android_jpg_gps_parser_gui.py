@@ -135,9 +135,9 @@ def export_entries_for_sync(parsed_results: List[Dict[str, object]], source_root
     if root is None:
         return {"ok": False, "error": "未找到 photo-album 项目根目录（缺少 sync-photo-timeline 脚本）"}
 
-    public_live_root = root / "public" / "assets" / "live"
-    public_live_root.mkdir(parents=True, exist_ok=True)
-    import_root = public_live_root / "_android-jpg-import"
+    live_data_root = root / "data" / "live"
+    live_data_root.mkdir(parents=True, exist_ok=True)
+    import_root = live_data_root / "_android-jpg-import"
     import_root.mkdir(parents=True, exist_ok=True)
 
     if source_root:
@@ -152,7 +152,7 @@ def export_entries_for_sync(parsed_results: List[Dict[str, object]], source_root
         source_root_path = first
 
     link_dir_name = "_android-jpg-source"
-    link_path = public_live_root / link_dir_name
+    link_path = live_data_root / link_dir_name
     try:
         if link_path.exists() or link_path.is_symlink():
             if link_path.is_symlink() or link_path.is_file():
@@ -232,7 +232,7 @@ def export_entries_for_sync(parsed_results: List[Dict[str, object]], source_root
         "ok": True,
         "entries": total_entries,
         "written_json_files": [str(out_json)],
-        "live_root": str(public_live_root),
+        "live_root": str(live_data_root),
         "source_root": str(source_root_path),
         "source_link": str(link_path),
     }

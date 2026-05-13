@@ -8,9 +8,8 @@
 ### 目录结构
 
 - `public/`: 静态站点（`photo-timeline.html`、`photo-map.html`、`admin-photo-timeline.html`、CSS/JS）
-- `server/`: Node API + SQLite（含同步 CLI、schema）
-- `public/assets/live/`: 你的照片/视频素材与 `photo-timeline-entry.json`（默认路径；也支持用环境变量改到别处）
-- `server/.data/`: 运行时 SQLite 与日志（自动生成，不提交）
+- `server/`: Node API（含同步 CLI、schema）
+- `data/`: **运行时数据目录（默认不提交）**：SQLite、写回调试日志、以及默认素材库 **`data/live/`**（`photo-timeline-entry.json` + 媒体）。站点仍通过 **`/assets/live/...`** 提供访问，与物理路径是否在 `public/` 无关。可用 `PHOTO_TIMELINE_LIVE_ROOT`、`PHOTO_TIMELINE_DB_PATH` 改路径。
 
 ### 快速开始
 
@@ -23,6 +22,8 @@ npm run sync-photo-timeline
 npm run start
 ```
 
+若你曾在旧版本使用默认路径 `public/assets/live/`，可把其中文件整体迁到 **`data/live/`**（保持子目录结构），再执行同步。
+
 然后打开：
 
 - `http://localhost:3000/photo-timeline.html`
@@ -34,7 +35,7 @@ npm run start
 在 `server/.env` 配置：
 
 - `PHOTO_TIMELINE_LIVE_ROOT`: 素材库目录
-  - 不填则默认 `public/assets/live`
+  - 不填则默认 **`data/live`**（仓库根下，与代码分离）
   - 支持绝对路径（例如 `/Volumes/Photos/live`）
   - 支持相对路径（相对 `photo-album/` 根目录，例如 `../my-photo-library/live`）
 
@@ -65,4 +66,4 @@ npm run start
 npm run dev:client
 ```
 
-Vite 会把 `/api` 代理到 `server/.env` 里的 `PORT`。
+Vite 会把 `/api`、`/assets/live`、`/uploadphotos` 代理到 `server/.env` 里的 `PORT`（后者两处对应 **`data/live`** 与上传目录，请勿删掉代理）。

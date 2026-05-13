@@ -10,6 +10,7 @@ import concurrent.futures
 import json
 import logging
 import os
+import re
 import shutil
 import struct
 import subprocess
@@ -235,7 +236,7 @@ def resolve_repo_root(output_root: str) -> Optional[Path]:
 def run_photo_timeline_db_sync(
     repo_root: Path, logger: logging.Logger, live_root: Optional[str] = None
 ) -> bool:
-    """在项目根执行 node server/photo-timeline-cli.mjs，将 public/assets/live 下 JSON 写入 SQLite。"""
+    """在项目根执行 node server/photo-timeline-cli.mjs，将默认素材根（如 data/live）下 JSON 写入 SQLite。"""
     cli = repo_root / "server" / "photo-timeline-cli.mjs"
     if not cli.is_file():
         logger.warning("未找到 %s，跳过数据库同步", cli)
@@ -740,6 +741,23 @@ def get_capture_date(heic_path: str, logger: logging.Logger) -> str:
             pass
     mtime = os.path.getmtime(heic_path)
     return datetime.fromtimestamp(mtime).strftime("%Y-%m-%d")
+
+
+def _extract_date_from_name(name: str) -> Optional[str]:
+    patterns = [
+        r"(20\d{2})[-_]?([01]\d)[-_]?([0-3]\d)",
+        r"(19\d{2})[-_]?([01]\d)[-_]?([0-3]\d)",
+    ]
+    for pattern in patterns:
+        m = re.search(pattern, name)
+        if not m:
+            continue
+        y, mo, d = int(m.group(1)), int(m.group(2)), int(m.group(3))
+        try:
+            return datetime(y, mo, d).strftime("%Y-%m-%d")
+        except ValueError:
+            continue
+    return None
 
 
 # ---------------------------------------------------------------------------
@@ -1263,14 +1281,14 @@ def extract_livp_streaming(
                         if dt_str:
                             capture_date = str(dt_str)[:10].replace(":", "-")
                         else:
-                            capture_date = datetime.now().strftime("%Y-%m-%d")
+                            capture_date = _extract_date_from_name(Path(livp_path).stem) or "0000-00-00"
                 elif result["type"] == "mov":
                     mov_files.append(result["path"])
         
-        # 如果未获取到日期，使用当前日期
+        # 如果未获取到日期：先尝试文件名，仍无则使用 0000-00-00
         if capture_date is None:
-            capture_date = datetime.now().strftime("%Y-%m-%d")
-            logger.warning("无法确定拍摄日期，使用今天: %s", capture_date)
+            capture_date = _extract_date_from_name(Path(livp_path).stem) or "0000-00-00"
+            logger.warning("无法确定拍摄日期，使用兜底值: %s", capture_date)
         
         # 重命名输出目录为最终名称
         final_folder_name = f"{capture_date}_{livp_name}"

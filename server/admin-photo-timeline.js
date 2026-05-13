@@ -15,11 +15,13 @@ import {
   updateTimelinePhotoMeta,
   updateTimelineEntryMeta,
 } from "./photo-timeline.js";
+import { registerAdminPhotoUploadRoutes } from "./photo-upload.js";
 
 /** @param {import("express").Application} app */
 export function registerAdminPhotoTimelineRoutes(app, opts) {
   const publicDir = opts.publicDir;
   const serverDir = opts.serverDir;
+  const uploadPhotosRoot = opts.uploadPhotosRoot;
 
   app.post("/api/admin/logout", function (req, res) {
     clearAdminAuthCookies(req, res);
@@ -207,4 +209,6 @@ export function registerAdminPhotoTimelineRoutes(app, opts) {
       res.status(code).json({ ok: false, error: msg });
     }
   });
+
+  registerAdminPhotoUploadRoutes(app, { publicDir, serverDir, uploadPhotosRoot });
 }

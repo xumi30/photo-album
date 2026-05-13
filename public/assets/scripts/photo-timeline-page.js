@@ -43,7 +43,6 @@
   const searchInput = $("searchInput");
   const sortSelect = $("sortSelect");
   const jumpDateInput = $("jumpDateInput");
-  const jumpDateBtn = $("jumpDateBtn");
   const yearJumpWrap = $("yearJumpWrap");
   const timeRail = $("timeRail");
   const timeRailToggle = $("timeRailToggle");
@@ -177,6 +176,39 @@
     }
   };
 
+  /** 站点挂在子路径（如 /photo-album/）时，根路径 /assets/live、/uploadphotos 需加前缀 */
+  const sitePathPrefix = () => {
+    try {
+      const p = window.location.pathname || "";
+      if (p.startsWith("/photo-album/")) return "/photo-album";
+    } catch (_) {
+      /* ignore */
+    }
+    return "";
+  };
+
+  /** 站点根目录下的 uploadphotos；assets/live 由 Node 映射到 data/live */
+  const toSiteMediaUrl = (u) => {
+    let s = String(u || "").trim();
+    if (!s) return s;
+    s = s.replace(/\\/g, "/");
+    const base = sitePathPrefix();
+    const noLead = s.replace(/^\/+/, "");
+    if (
+      !/^assets\/live(\/|$)/i.test(noLead) &&
+      !/^uploadphotos\//i.test(noLead) &&
+      !/^(https?:|data:)/i.test(noLead)
+    ) {
+      if (/^_(livp-external|admin-manual|admin-import)(\/|$)/i.test(noLead)) {
+        s = `assets/live/${noLead}`;
+      }
+    }
+    if (/^uploadphotos\//i.test(s)) return `${base}/${s.replace(/^\/+/, "")}`;
+    if (/^\/assets\/live(\/|$)/i.test(s)) return `${base}${s}`;
+    if (/^assets\/live(\/|$)/i.test(s)) return `${base}/${s.replace(/^\/+/, "")}`;
+    return s;
+  };
+
   const fetchJson = async (url) => {
     const res = await fetch(resolveUrl(url), { credentials: "same-origin" });
     if (!res.ok) throw new Error(res.statusText || String(res.status));
@@ -197,27 +229,62 @@
 
   let userSession = { hasSecret: false, loggedIn: false, username: "", ttlSec: 20 * 60 };
 
+  const guestTimelineActionsLocked = () => hasApi && userSession.hasSecret && !userSession.loggedIn;
+
+  function syncGuestRestrictedControls() {
+    if (!hasApi) return;
+    const locked = guestTimelineActionsLocked();
+    if (searchInput) {
+      searchInput.readOnly = locked;
+      searchInput.setAttribute("aria-disabled", locked ? "true" : "false");
+      searchInput.title = locked ? "请先登录后再使用筛选与搜索" : "";
+      searchInput.classList.toggle("search-input--guest-locked", locked);
+      searchInput.placeholder = locked ? "登录后可搜索地名、备注、标签…" : "搜索地名、备注、标签…";
+    }
+    if (sortSelect) sortSelect.disabled = locked;
+    if (clearBtn) clearBtn.disabled = locked;
+    if (timeRailToggle) timeRailToggle.disabled = locked;
+    syncJumpDateControl();
+  }
+
+  function resetGuestDisallowedUiState() {
+    if (!guestTimelineActionsLocked()) return;
+    state.query = "";
+    state.tags.clear();
+    state.sortDesc = true;
+    state.pageIndex = 0;
+    if (searchInput) searchInput.value = "";
+    if (sortSelect) sortSelect.value = "desc";
+    if (jumpDateInput) jumpDateInput.value = "";
+    replaceHashEntryId("");
+  }
+
   const updateUserAuthBtnUi = () => {
-    if (!userAuthBtn) return;
-    if (!hasApi) {
-      userAuthBtn.style.display = "none";
-      return;
+    try {
+      if (!userAuthBtn) return;
+      if (!hasApi) {
+        userAuthBtn.style.display = "none";
+        return;
+      }
+      userAuthBtn.style.display = "";
+      if (!userSession.hasSecret) {
+        userAuthBtn.textContent = "登录（未配置）";
+        userAuthBtn.title = "服务端未配置 PHOTO_TIMELINE_USER_USERNAME / PHOTO_TIMELINE_USER_PASSWORD";
+        userAuthBtn.disabled = true;
+        return;
+      }
+      userAuthBtn.disabled = false;
+      userAuthBtn.textContent = userSession.loggedIn ? "退出" : "登录";
+      userAuthBtn.title = userSession.loggedIn
+        ? `已登录${userSession.username ? `：${userSession.username}` : ""}，点击退出`
+        : "前往独立登录页";
+    } finally {
+      syncGuestRestrictedControls();
     }
-    if (!userSession.hasSecret) {
-      userAuthBtn.textContent = "登录（未配置）";
-      userAuthBtn.title = "服务端未配置 PHOTO_TIMELINE_USER_USERNAME / PHOTO_TIMELINE_USER_PASSWORD";
-      userAuthBtn.disabled = true;
-      return;
-    }
-    userAuthBtn.disabled = false;
-    userAuthBtn.textContent = userSession.loggedIn ? "退出" : "登录";
-    userAuthBtn.title = userSession.loggedIn
-      ? `已登录${userSession.username ? `：${userSession.username}` : ""}，点击退出`
-      : "前往独立登录页";
   };
 
   const refreshUserSession = async () => {
-    if (!hasApi || !userAuthBtn) return;
+    if (!hasApi) return;
     try {
       const data = await fetchJson("/api/photo-timeline/session");
       userSession = {
@@ -236,15 +303,18 @@
     const url = new URL(resolveUrl(boot.entriesUrl), window.location.href);
     const offset = Math.max(0, Math.floor(Number(options.offset) || 0));
     const limit = Math.max(1, Math.floor(Number(options.limit) || pageSize));
-    url.searchParams.set("sort", state.sortDesc ? "desc" : "asc");
-    url.searchParams.set("offset", String(offset));
+    const locked = guestTimelineActionsLocked();
+    url.searchParams.set("sort", locked ? "desc" : state.sortDesc ? "desc" : "asc");
+    url.searchParams.set("offset", String(locked ? 0 : offset));
     url.searchParams.set("limit", String(limit));
-    const q = String(state.query || "").trim();
+    const q = locked ? "" : String(state.query || "").trim();
     if (q) url.searchParams.set("q", q);
-    if (options.anchorDate) url.searchParams.set("anchorDate", String(options.anchorDate));
-    Array.from(state.tags)
-      .sort()
-      .forEach((tag) => url.searchParams.append("tag", tag));
+    if (!locked && options.anchorDate) url.searchParams.set("anchorDate", String(options.anchorDate));
+    if (!locked) {
+      Array.from(state.tags)
+        .sort()
+        .forEach((tag) => url.searchParams.append("tag", tag));
+    }
     return url.toString();
   };
 
@@ -279,6 +349,9 @@
   };
 
   const fetchApiEntries = async (options = {}) => {
+    if (hasApi && guestTimelineActionsLocked() && !options.allowGuestSnapshotFetch) {
+      return null;
+    }
     const requestId = ++apiRequestSeq;
     const data = await fetchJson(
       buildApiEntriesUrl({
@@ -298,18 +371,18 @@
       offset: 0,
       limit: Math.max(pageSize, allEntries.length || pageSize),
       append: false,
+      allowGuestSnapshotFetch: guestTimelineActionsLocked(),
     });
   };
 
   if (userAuthBtn) {
-    updateUserAuthBtnUi();
-    refreshUserSession();
     userAuthBtn.addEventListener("click", async function () {
       if (!hasApi) return;
       try {
         if (userSession.loggedIn) {
           await postJson("/api/photo-timeline/logout", {});
           await refreshUserSession();
+          resetGuestDisallowedUiState();
           await reloadEntriesFromApi();
           render();
           return;
@@ -348,6 +421,10 @@
 
   const runResolveGpsLabel = async (entry, alsoEntryIds) => {
     if (!hasApi) return;
+    if (guestTimelineActionsLocked()) {
+      window.alert("未登录不可操作");
+      return;
+    }
     delete entry._locationError;
     entry._locationLoading = true;
     render();
@@ -377,7 +454,8 @@
     nextChunkUrl = nu != null && String(nu).trim() !== "" ? String(nu).trim() : null;
   };
 
-  const listImageSrc = (photo) => (photo.thumb && String(photo.thumb).trim()) || photo.src;
+  const listImageSrc = (photo) =>
+    toSiteMediaUrl((photo.thumb && String(photo.thumb).trim()) || photo.src);
 
   const ensureCardVideoSource = (video) => {
     if (!video) return;
@@ -595,6 +673,10 @@
       entry._weatherError = "需要拍摄日与 GPS";
       delete entry._weatherLoading;
       render();
+      return;
+    }
+    if (hasApi && guestTimelineActionsLocked()) {
+      window.alert("未登录不可操作");
       return;
     }
     entry._weatherError = "";
@@ -888,9 +970,10 @@
     if (!jumpDateInput) return;
     jumpDateInput.min = remoteMinDate || "";
     jumpDateInput.max = remoteMaxDate || "";
-    const disabled = !hasApi || remoteTotal <= 0;
+    const locked = guestTimelineActionsLocked();
+    const noData = hasApi ? remoteTotal <= 0 : allEntries.length <= 0;
+    const disabled = locked || noData;
     jumpDateInput.disabled = disabled;
-    if (jumpDateBtn) jumpDateBtn.disabled = disabled;
   };
 
   const getAvailableYears = () => {
@@ -1159,6 +1242,10 @@
         persistViewStateSoon();
         return;
       }
+      if (guestTimelineActionsLocked()) {
+        window.alert("未登录不可操作");
+        return;
+      }
       countText.textContent = "地点跳转中…";
       const data = await fetchApiEntries({
         offset: 0,
@@ -1276,6 +1363,7 @@
   };
 
   const fetchNextChunk = async () => {
+    if (hasApi && guestTimelineActionsLocked()) return false;
     if (!nextChunkUrl || chunkLoading) return false;
     chunkLoading = true;
     try {
@@ -1351,6 +1439,10 @@
       chip.className = "chip";
       chip.textContent = tag;
       chip.addEventListener("click", async () => {
+        if (guestTimelineActionsLocked()) {
+          window.alert("未登录不可操作");
+          return;
+        }
         if (state.tags.has(tag)) {
           state.tags.delete(tag);
           chip.classList.remove("active");
@@ -1417,7 +1509,7 @@
       /* 默认先不占用视频缓冲，悬停预览时再挂载 src 并播放 */
       vid.preload = "none";
       vid.poster = listImageSrc(photo);
-      vid.dataset.videoSrc = photo.video;
+      vid.dataset.videoSrc = toSiteMediaUrl(photo.video);
       btn.appendChild(vid);
       vid.addEventListener("ended", () => {
         vid.pause();
@@ -1954,8 +2046,8 @@
       lightboxVideo.preload = "auto";
       lightboxVideo.muted = state.lightbox.videoMuted;
       lightboxVideo.defaultMuted = state.lightbox.videoMuted;
-      lightboxVideo.src = photo.video;
-      lightboxVideo.poster = photo.src;
+      lightboxVideo.src = toSiteMediaUrl(photo.video);
+      lightboxVideo.poster = toSiteMediaUrl(photo.src);
 
       let liveAtPoster = false;
       let liveEndedHandler = null;
@@ -1987,7 +2079,7 @@
 
       const showLivePoster = () => {
         liveAtPoster = true;
-        lightboxImage.src = photo.src;
+        lightboxImage.src = toSiteMediaUrl(photo.src);
         lightboxImage.alt = photo.caption || entry.title;
         lightboxImage.style.display = "";
         lightboxVideo.style.display = "none";
@@ -2098,7 +2190,7 @@
       lightboxVideo.src = "";
       lightboxVideo.poster = "";
       lightboxImage.style.display = "";
-      lightboxImage.src = photo.src;
+      lightboxImage.src = toSiteMediaUrl(photo.src);
       lightboxImage.alt = photo.caption || entry.title;
       const captionText = photo.caption || "";
       lightboxCaption.innerHTML = captionText;
@@ -2185,6 +2277,7 @@
 
   const refreshApiListing = async (limitOverride) => {
     if (!hasApi) return;
+    if (guestTimelineActionsLocked()) return;
     countText.textContent = "加载中…";
     const data = await fetchApiEntries({
       offset: 0,
@@ -2200,10 +2293,53 @@
     persistViewStateSoon();
   };
 
+  const scrollDayItemIntoView = (el) => {
+    if (!el) return false;
+    el.scrollIntoView({ behavior: "smooth", block: "start" });
+    return true;
+  };
+
+  const scrollToFirstRenderedDayOnOrAfter = (ymd) => {
+    const items = Array.from(timeline.querySelectorAll(".day-item[data-day-key]"));
+    for (const item of items) {
+      const k = String(item.dataset.dayKey || "");
+      if (!k || k.startsWith("__")) continue;
+      if (k >= ymd) return scrollDayItemIntoView(item);
+    }
+    return false;
+  };
+
   const jumpToDate = async () => {
-    if (!hasApi || !jumpDateInput) return;
+    if (!jumpDateInput) return;
+    if (guestTimelineActionsLocked()) {
+      window.alert("未登录不可操作");
+      return;
+    }
     const value = String(jumpDateInput.value || "").trim();
     if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) return;
+
+    if (!hasApi) {
+      const data = getEntries();
+      const maxPages = Math.ceil(data.length / Math.max(1, pageSize)) + 4;
+      let guard = 0;
+      while (guard++ < maxPages) {
+        render();
+        if (scrollDayItemIntoView(getRenderedDayItem(value))) {
+          persistViewStateSoon();
+          return;
+        }
+        if (scrollToFirstRenderedDayOnOrAfter(value)) {
+          persistViewStateSoon();
+          return;
+        }
+        const shown = (state.pageIndex + 1) * pageSize;
+        if (shown >= data.length) break;
+        state.pageIndex += 1;
+      }
+      persistViewStateSoon();
+      return;
+    }
+
     countText.textContent = "跳转中…";
     const data = await fetchApiEntries({
       offset: 0,
@@ -2322,18 +2458,18 @@
       delete timeline.dataset.visibleCount;
     }
     emptyState.style.display = visible.length === 0 ? "block" : "none";
-    const totalLabel = "999+";
-    const shownLabel = visible.length;
-    const dayGroups = groupEntriesByCalendarDay(visible);
-    const shownDays = dayGroups.length;
-    let summary = `${totalLabel} 条 · 已展示 ${shownLabel} 条 · ${shownDays} 个日期`;
-    if (hasApi && !apiMeta.loggedIn && apiMeta.guestVisiblePhotoLimit) {
-      summary += ` · 游客最多预览 ${apiMeta.guestVisiblePhotoLimit} 张照片`;
-    }
-    countText.textContent = summary;
     const hasMoreInMemory = hasApi ? false : visible.length < data.length;
     const hasMoreRemote = !!nextChunkUrl;
+    let summary = "共9999+";
+    if (hasApi && !apiMeta.loggedIn && apiMeta.guestVisiblePhotoLimit) {
+      summary += `，游客可观${apiMeta.guestVisiblePhotoLimit}条`;
+    }
+    countText.textContent = summary;
+    const dayGroups = groupEntriesByCalendarDay(visible);
     loadMore.style.display = hasMoreInMemory || hasMoreRemote ? "" : "none";
+    if (hasApi && guestTimelineActionsLocked()) {
+      loadMore.style.display = "none";
+    }
     if (guestLimitNotice) {
       const showGuestLimitNotice =
         hasApi &&
@@ -2374,7 +2510,29 @@
     syncTimeRailCurrent();
   };
 
+  if (searchInput) {
+    searchInput.addEventListener(
+      "pointerdown",
+      (e) => {
+        if (!guestTimelineActionsLocked()) return;
+        e.preventDefault();
+        window.alert("未登录不可操作");
+      },
+      { passive: false }
+    );
+    searchInput.addEventListener("focus", () => {
+      if (!guestTimelineActionsLocked()) return;
+      searchInput.blur();
+      window.alert("未登录不可操作");
+    });
+  }
+
   searchInput.addEventListener("input", () => {
+    if (guestTimelineActionsLocked()) {
+      searchInput.value = "";
+      state.query = "";
+      return;
+    }
     state.query = searchInput.value || "";
     state.pageIndex = 0;
     if (!hasApi) {
@@ -2389,6 +2547,11 @@
   });
 
   sortSelect.addEventListener("change", () => {
+    if (guestTimelineActionsLocked()) {
+      sortSelect.value = state.sortDesc ? "desc" : "asc";
+      window.alert("未登录不可操作");
+      return;
+    }
     state.sortDesc = sortSelect.value === "desc";
     state.pageIndex = 0;
     if (!hasApi) {
@@ -2402,22 +2565,24 @@
     });
   });
 
-  if (jumpDateBtn) {
-    jumpDateBtn.addEventListener("click", () => {
-      jumpToDate().catch((error) => {
-        console.error(error);
-        countText.textContent = "日期跳转失败";
-      });
-    });
-  }
-
   if (timeRailToggle) {
     timeRailToggle.addEventListener("click", () => {
+      const willOpen = !!(timeRailPanel && timeRailPanel.hidden);
+      if (willOpen && guestTimelineActionsLocked()) {
+        window.alert("未登录不可操作");
+        return;
+      }
       setTimeRailOpen(timeRailPanel ? timeRailPanel.hidden : true);
     });
   }
 
   if (jumpDateInput) {
+    jumpDateInput.addEventListener("change", () => {
+      jumpToDate().catch((error) => {
+        console.error(error);
+        countText.textContent = "日期跳转失败";
+      });
+    });
     jumpDateInput.addEventListener("keydown", (event) => {
       if (event.key !== "Enter") return;
       event.preventDefault();
@@ -2450,6 +2615,10 @@
   });
 
   loadMore.addEventListener("click", async () => {
+    if (guestTimelineActionsLocked()) {
+      window.alert("未登录不可操作");
+      return;
+    }
     const data = getEntries();
     const limit = (state.pageIndex + 1) * pageSize;
     if (limit < data.length) {
@@ -2504,13 +2673,19 @@
 
   const bootstrap = async () => {
     const saved = readSavedViewState();
+    if (hasApi) {
+      await refreshUserSession();
+    }
     applySavedUiState(saved);
+    resetGuestDisallowedUiState();
+    syncGuestRestrictedControls();
     if (hasApi) {
       try {
         await fetchApiEntries({
           offset: 0,
           limit: Math.max(pageSize, (state.pageIndex + 1) * pageSize),
           append: false,
+          allowGuestSnapshotFetch: guestTimelineActionsLocked(),
         });
       } catch (e) {
         console.error(e);
